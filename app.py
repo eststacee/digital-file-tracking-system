@@ -1,370 +1,706 @@
 import streamlit as st
-import pandas as pd
 
 from database import (
     initialize_database,
     add_user,
     get_users,
-    add_file,
-    get_files,
-    find_file,
-    pick_file,
-    return_file,
+    acknowledge_oath,
+    add_item,
+    get_items,
+    find_item,
+    issue_item,
+    return_item,
     get_movements,
+    get_notifications
 )
 
-from barcode import generate_barcode
-from export import create_excel_file
+from export import create_excel_export
 
+
+# ---------------------------------------------------------
+# PAGE CONFIGURATION
+# ---------------------------------------------------------
 
 st.set_page_config(
-    page_title="Digital File Tracking System",
-    page_icon="📁",
-    layout="wide",
+    page_title="Library Book Tracking System",
+    page_icon="📚",
+    layout="wide"
 )
 
 initialize_database()
 
-st.title("📁 Digital File Tracking System")
-st.caption("Digital tracking, retrieval and accountability for physical files")
 
-st.sidebar.title("Navigation")
+# ---------------------------------------------------------
+# SESSION STATE
+# ---------------------------------------------------------
 
-page = st.sidebar.radio(
-    "Select a page",
-    [
-        "Dashboard",
-        "Register User",
-        "Register File",
-        "Pick / Return File",
-        "Search Files",
-        "Movement History",
-        "Export to Excel",
-    ],
-)
+if "logged_in_user" not in st.session_state:
+    st.session_state.logged_in_user = None
 
-if page == "Dashboard":
-    st.header("Dashboard")
 
-    files = get_files()
-    users = get_users()
+# ---------------------------------------------------------
+# HELPERS
+# ---------------------------------------------------------
 
-    total_files = len(files)
-    available_files = sum(file["status"] == "AVAILABLE" for file in files)
-    files_out = sum(file["status"] == "OUT" for file in files)
-    total_users = len(users)
+def get_role():
+    user = st.session_state.logged_in_user
 
-    col1, col2, col3, col4 = st.columns(4)
+    if user:
+        return user["role"]
 
-    col1.metric("Total Files", total_files)
-    col2.metric("Available Files", available_files)
-    col3.metric("Files Out", files_out)
-    col4.metric("Registered Users", total_users)
+    return None
 
-    st.divider()
-    st.subheader("Currently Out")
 
-    current_files = [file for file in files if file["status"] == "OUT"]
+def is_admin():
+    return get_role() == "Admin"
 
-    if current_files:
-        current_data = [
-            {
-                "File Number": file["file_number"],
-                "File Name": file["file_name"],
-                "Department": file["department"],
-                "Current Holder": file["current_holder"],
-                "Holder Email": file["holder_email"],
-                "Barcode": file["barcode"],
-            }
-            for file in current_files
-        ]
 
-        st.dataframe(
-            pd.DataFrame(current_data),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.success("All files are currently available.")
+def is_view_only():
+    return get_role() == "View Only"
 
-elif page == "Register User":
-    st.header("Register User")
-    st.write("Add an authorized staff member to the filing system.")
 
-    with st.form("register_user_form"):
-        name = st.text_input("Full Name")
-        email = st.text_input("Organization Email")
-        department = st.text_input("Department")
-        staff_number = st.text_input("Staff Number")
+# ---------------------------------------------------------
+# LOGIN / USER SELECTION
+# ---------------------------------------------------------
 
-        submitted = st.form_submit_button("Register User")
+st.sidebar.title("📚 Library Tracking System")
 
-        if submitted:
-            if not all([name, email, department, staff_number]):
-                st.error("Please fill in all fields.")
-            else:
-                success, message = add_user(
-                    name=name.strip(),
-                    email=email.strip().lower(),
-                    department=department.strip(),
-                    staff_number=staff_number.strip(),
-                )
+users = get_users()
 
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
+if not users:
+    st.sidebar.info(
+        "No users have been registered yet. "
+        "An administrator should register the first user."
+    )
+else:
 
-    st.divider()
-    st.subheader("Registered Users")
+    user_options = {
+        f'{user["name"]} ({user["staff_number"]})': user
+        for user in users
+    }
 
-    users = get_users()
-
-    if users:
-        users_data = [
-            {
-                "Name": user["name"],
-                "Email": user["email"],
-                "Department": user["department"],
-                "Staff Number": user["staff_number"],
-                "Registered": user["created_at"],
-            }
-            for user in users
-        ]
-
-        st.dataframe(
-            pd.DataFrame(users_data),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No users have been registered yet.")
-
-elif page == "Register File":
-    st.header("Register Physical File")
-    st.write("Register a physical file and create its unique barcode.")
-
-    with st.form("register_file_form"):
-        file_number = st.text_input(
-            "File Number",
-            placeholder="Example: AFA/ICT/001",
-        )
-        file_name = st.text_input(
-            "File Name",
-            placeholder="Example: ICT Equipment Records",
-        )
-        department = st.text_input(
-            "Department",
-            placeholder="Example: ICT",
-        )
-
-        submitted = st.form_submit_button("Register File")
-
-        if submitted:
-            if not all([file_number, file_name, department]):
-                st.error("Please fill in all fields.")
-            else:
-                barcode_value = generate_barcode(file_number)
-
-                success, message = add_file(
-                    file_number=file_number.strip().upper(),
-                    file_name=file_name.strip(),
-                    department=department.strip(),
-                    barcode=barcode_value,
-                )
-
-                if success:
-                    st.success(message)
-                    st.info(f"Generated Barcode Value: **{barcode_value}**")
-                else:
-                    st.error(message)
-
-    st.divider()
-    st.subheader("Registered Files")
-
-    files = get_files()
-
-    if files:
-        files_data = [
-            {
-                "File Number": file["file_number"],
-                "File Name": file["file_name"],
-                "Department": file["department"],
-                "Barcode": file["barcode"],
-                "Status": file["status"],
-                "Current Holder": file["current_holder"] or "-",
-            }
-            for file in files
-        ]
-
-        st.dataframe(
-            pd.DataFrame(files_data),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No files have been registered yet.")
-
-elif page == "Pick / Return File":
-    st.header("Pick / Return File")
-    st.write("Enter or scan the file barcode.")
-
-    barcode_input = st.text_input(
-        "File Barcode",
-        placeholder="Example: AFA-ICT-001",
+    selected_user_name = st.sidebar.selectbox(
+        "Current User",
+        list(user_options.keys())
     )
 
-    if barcode_input:
-        file = find_file(barcode_input.strip())
+    st.session_state.logged_in_user = user_options[
+        selected_user_name
+    ]
 
-        if not file:
-            st.error("No file found with that barcode.")
+
+current_user = st.session_state.logged_in_user
+
+
+# ---------------------------------------------------------
+# NAVIGATION
+# ---------------------------------------------------------
+
+menu = [
+    "Dashboard",
+    "Scan / Issue / Return",
+    "Search Items",
+    "Movement History",
+    "Notifications",
+    "Oath & Responsibilities",
+    "Export to Excel"
+]
+
+if is_admin():
+    menu.insert(1, "Register User")
+    menu.insert(2, "Register Book / Item")
+
+page = st.sidebar.radio(
+    "Navigation",
+    menu
+)
+
+
+# ---------------------------------------------------------
+# DASHBOARD
+# ---------------------------------------------------------
+
+if page == "Dashboard":
+
+    st.title("📚 Library Book Tracking System")
+
+    st.write(
+        "Track books/items, lending, returns and movement history."
+    )
+
+    items = get_items()
+
+    total_items = len(items)
+    available = len([
+        item for item in items
+        if item["status"] == "AVAILABLE"
+    ])
+    borrowed = len([
+        item for item in items
+        if item["status"] == "BORROWED"
+    ])
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "Total Items",
+        total_items
+    )
+
+    col2.metric(
+        "Available",
+        available
+    )
+
+    col3.metric(
+        "Borrowed",
+        borrowed
+    )
+
+    st.divider()
+
+    st.subheader("Currently Borrowed")
+
+    borrowed_items = [
+        item for item in items
+        if item["status"] == "BORROWED"
+    ]
+
+    if borrowed_items:
+
+        for item in borrowed_items:
+
+            st.write(
+                f"**{item['title']}** — "
+                f"{item['current_holder']}"
+            )
+
+            st.caption(
+                f"Item ID: {item['item_id']} | "
+                f"Department: {item['department']} | "
+                f"Section: {item['section'] or 'Not specified'}"
+            )
+
+    else:
+        st.success("No items are currently borrowed.")
+
+
+# ---------------------------------------------------------
+# REGISTER USER
+# ---------------------------------------------------------
+
+elif page == "Register User":
+
+    if not is_admin():
+        st.error("Only administrators can register users.")
+        st.stop()
+
+    st.title("👤 Register User")
+
+    with st.form("register_user"):
+
+        name = st.text_input("Full Name")
+
+        email = st.text_input(
+            "Organization Email"
+        )
+
+        department = st.text_input(
+            "Department"
+        )
+
+        section = st.text_input(
+            "Section (Optional)"
+        )
+
+        staff_number = st.text_input(
+            "Staff Number"
+        )
+
+        role = st.selectbox(
+            "Access Role",
+            [
+                "User",
+                "View Only",
+                "Admin"
+            ]
+        )
+
+        submitted = st.form_submit_button(
+            "Register User"
+        )
+
+    if submitted:
+
+        if not name or not email or not department or not staff_number:
+            st.error(
+                "Please fill in all required fields."
+            )
+
         else:
-            st.subheader("File Information")
+
+            success, message = add_user(
+                name,
+                email,
+                department,
+                section,
+                staff_number,
+                role
+            )
+
+            if success:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+
+
+# ---------------------------------------------------------
+# REGISTER BOOK / ITEM
+# ---------------------------------------------------------
+
+elif page == "Register Book / Item":
+
+    if not is_admin():
+        st.error(
+            "Only administrators can register books/items."
+        )
+        st.stop()
+
+    st.title("📖 Register Book / Item")
+
+    with st.form("register_item"):
+
+        title = st.text_input(
+            "Book / Item Title"
+        )
+
+        department = st.text_input(
+            "Department"
+        )
+
+        section = st.text_input(
+            "Section (Optional)"
+        )
+
+        submitted = st.form_submit_button(
+            "Register Book / Item"
+        )
+
+    if submitted:
+
+        if not title or not department:
+            st.error(
+                "Title and Department are required."
+            )
+
+        else:
+
+            success, result = add_item(
+                title,
+                department,
+                section
+            )
+
+            if success:
+
+                st.success(
+                    "Book/item registered successfully."
+                )
+
+                st.info(
+                    f"Item ID: {result['item_id']}"
+                )
+
+                st.info(
+                    f"Barcode: {result['barcode']}"
+                )
+
+                st.warning(
+                    "Print or attach this barcode to the physical item."
+                )
+
+            else:
+                st.error(result)
+
+
+# ---------------------------------------------------------
+# SCAN / ISSUE / RETURN
+# ---------------------------------------------------------
+
+elif page == "Scan / Issue / Return":
+
+    st.title("📷 Scan / Issue / Return")
+
+    if is_view_only():
+        st.info(
+            "You have View Only access. "
+            "You can search and view item information, "
+            "but you cannot issue or return items."
+        )
+
+    st.write(
+        "Scan the barcode using a USB barcode scanner "
+        "or type the barcode manually."
+    )
+
+    barcode = st.text_input(
+        "Scan Barcode",
+        placeholder="Place cursor here and scan..."
+    )
+
+    if barcode:
+
+        item = find_item(barcode)
+
+        if not item:
+
+            st.error(
+                "No item was found with that barcode."
+            )
+
+        else:
+
+            st.subheader(
+                f"📖 {item['title']}"
+            )
 
             col1, col2 = st.columns(2)
 
             with col1:
-                st.write(f"**File Number:** {file['file_number']}")
-                st.write(f"**File Name:** {file['file_name']}")
-                st.write(f"**Department:** {file['department']}")
+
+                st.write(
+                    f"**Item ID:** {item['item_id']}"
+                )
+
+                st.write(
+                    f"**Department:** {item['department']}"
+                )
+
+                st.write(
+                    f"**Section:** "
+                    f"{item['section'] or 'Not specified'}"
+                )
 
             with col2:
-                st.write(f"**Barcode:** {file['barcode']}")
 
-                if file["status"] == "AVAILABLE":
-                    st.success("🟢 AVAILABLE")
-                else:
-                    st.error("🔴 OUT")
-                    st.write(f"**Current Holder:** {file['current_holder']}")
-                    st.write(f"**Email:** {file['holder_email']}")
+                st.write(
+                    f"**Barcode:** {item['barcode']}"
+                )
+
+                st.write(
+                    f"**Status:** {item['status']}"
+                )
+
+                if item["current_holder"]:
+                    st.write(
+                        f"**Current Borrower:** "
+                        f"{item['current_holder']}"
+                    )
 
             st.divider()
 
-            users = get_users()
+            if not is_view_only():
 
-            if not users:
-                st.warning("Please register at least one user first.")
-            else:
-                user_options = {
-                    f"{user['name']} — {user['staff_number']} — {user['email']}": user["id"]
-                    for user in users
-                }
-
-                selected_user = st.selectbox(
-                    "Staff Member",
-                    list(user_options.keys()),
+                remarks = st.text_area(
+                    "Remarks (Optional)"
                 )
 
-                user_id = user_options[selected_user]
+                if item["status"] == "AVAILABLE":
 
-                remarks = st.text_area("Remarks (optional)")
+                    st.success(
+                        "This item is available."
+                    )
 
-                if file["status"] == "AVAILABLE":
-                    if st.button("📤 PICK FILE", type="primary"):
-                        success, message = pick_file(
-                            file_id=file["id"],
-                            user_id=user_id,
-                            remarks=remarks,
-                        )
+                    if current_user["role"] in [
+                        "Admin",
+                        "User"
+                    ]:
 
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
+                        if st.button(
+                            "📤 ISSUE ITEM"
+                        ):
+
+                            success, message = issue_item(
+                                item["id"],
+                                current_user["id"],
+                                remarks
+                            )
+
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+
                 else:
-                    if st.button("📥 RETURN FILE", type="primary"):
-                        success, message = return_file(
-                            file_id=file["id"],
-                            user_id=user_id,
-                            remarks=remarks,
+
+                    st.warning(
+                        f"This item is currently borrowed "
+                        f"by {item['current_holder']}."
+                    )
+
+                    if item["current_holder_id"] == current_user["id"]:
+
+                        if st.button(
+                            "📥 RETURN ITEM"
+                        ):
+
+                            success, message = return_item(
+                                item["id"],
+                                current_user["id"],
+                                remarks
+                            )
+
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+
+                    elif is_admin():
+
+                        st.info(
+                            "An administrator can view the "
+                            "record, but the current borrower "
+                            "should normally return the item."
                         )
 
-                        if success:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
 
-elif page == "Search Files":
-    st.header("Search Files")
+# ---------------------------------------------------------
+# SEARCH
+# ---------------------------------------------------------
+
+elif page == "Search Items":
+
+    st.title("🔎 Search Books / Items")
 
     search = st.text_input(
-        "Search by file number, file name or barcode",
-        placeholder="Example: AFA-ICT-001",
+        "Search by Item ID, Barcode or Title"
     )
 
     if search:
-        file = find_file(search.strip())
 
-        if file:
-            st.success("File found.")
+        item = find_item(search)
 
-            col1, col2 = st.columns(2)
+        if item:
 
-            with col1:
-                st.write(f"**File Number:** {file['file_number']}")
-                st.write(f"**File Name:** {file['file_name']}")
-                st.write(f"**Department:** {file['department']}")
+            st.success("Item found.")
 
-            with col2:
-                st.write(f"**Barcode:** {file['barcode']}")
-                st.write(f"**Status:** {file['status']}")
+            st.write(
+                f"**Title:** {item['title']}"
+            )
 
-                if file["current_holder"]:
-                    st.write(f"**Current Holder:** {file['current_holder']}")
-                    st.write(f"**Email:** {file['holder_email']}")
+            st.write(
+                f"**Item ID:** {item['item_id']}"
+            )
+
+            st.write(
+                f"**Barcode:** {item['barcode']}"
+            )
+
+            st.write(
+                f"**Department:** {item['department']}"
+            )
+
+            st.write(
+                f"**Section:** "
+                f"{item['section'] or 'Not specified'}"
+            )
+
+            st.write(
+                f"**Status:** {item['status']}"
+            )
+
+            if item["current_holder"]:
+                st.write(
+                    f"**Current Borrower:** "
+                    f"{item['current_holder']}"
+                )
+
         else:
-            st.warning("No matching file found.")
+
+            st.warning(
+                "No matching item was found."
+            )
+
+
+# ---------------------------------------------------------
+# MOVEMENT HISTORY
+# ---------------------------------------------------------
 
 elif page == "Movement History":
-    st.header("File Movement History")
+
+    st.title("📋 Movement History")
 
     movements = get_movements()
 
     if movements:
-        movement_data = [
-            {
-                "File Number": movement["file_number"],
-                "File Name": movement["file_name"],
-                "Barcode": movement["barcode"],
-                "Staff Name": movement["name"],
-                "Email": movement["email"],
-                "Department": movement["department"],
-                "Staff Number": movement["staff_number"],
-                "Action": movement["action"],
-                "Date & Time": movement["movement_time"],
-                "Remarks": movement["remarks"] or "",
-            }
-            for movement in movements
-        ]
 
         st.dataframe(
-            pd.DataFrame(movement_data),
+            movements,
             use_container_width=True,
-            hide_index=True,
+            hide_index=True
         )
+
     else:
-        st.info("No file movements have been recorded yet.")
+
+        st.info(
+            "No movement history is available yet."
+        )
+
+
+# ---------------------------------------------------------
+# NOTIFICATIONS
+# ---------------------------------------------------------
+
+elif page == "Notifications":
+
+    st.title("🔔 Notifications")
+
+    user_id = None
+
+    if current_user:
+        user_id = current_user["id"]
+
+    notifications = get_notifications(user_id)
+
+    if notifications:
+
+        for notification in notifications:
+
+            if notification["notification_type"] == "WARNING":
+                st.warning(
+                    f"**{notification['title']}**\n\n"
+                    f"{notification['message']}"
+                )
+
+            elif notification["notification_type"] == "SUCCESS":
+                st.success(
+                    f"**{notification['title']}**\n\n"
+                    f"{notification['message']}"
+                )
+
+            else:
+                st.info(
+                    f"**{notification['title']}**\n\n"
+                    f"{notification['message']}"
+                )
+
+    else:
+
+        st.info(
+            "No notifications at the moment."
+        )
+
+
+# ---------------------------------------------------------
+# OATH
+# ---------------------------------------------------------
+
+elif page == "Oath & Responsibilities":
+
+    st.title("📜 Oath & Responsibilities")
+
+    st.subheader(
+        "Responsibilities of Credit / System Administrators"
+    )
+
+    st.markdown("""
+    - Maintain accurate records of books/items.
+    - Ensure every item is properly registered.
+    - Ensure barcode scanning is performed during issue and return.
+    - Maintain accurate movement and accountability records.
+    - Manage user access appropriately.
+    - Protect organizational information.
+    - Report discrepancies or unauthorized activity.
+    - Ensure system records are kept up to date.
+    """)
+
+    st.subheader(
+        "Responsibilities of System Users"
+    )
+
+    st.markdown("""
+    - Provide accurate personal and staff information.
+    - Use only their authorized account/access.
+    - Scan every item before taking it.
+    - Return borrowed items promptly.
+    - Do not transfer borrowed items to another person without authorization.
+    - Report lost or damaged items immediately.
+    - Report incorrect system records.
+    - Protect their system access credentials.
+    """)
+
+    st.divider()
+
+    st.subheader("User Acknowledgement")
+
+    st.write(
+        "I acknowledge that I have read and understood "
+        "the responsibilities governing the use of this system "
+        "and agree to comply with them."
+    )
+
+    if current_user:
+
+        if current_user["oath_acknowledged"]:
+
+            st.success(
+                f"Oath acknowledged on "
+                f"{current_user['oath_date']}"
+            )
+
+        else:
+
+            if st.button(
+                "I Acknowledge and Accept"
+            ):
+
+                acknowledge_oath(
+                    current_user["id"]
+                )
+
+                st.success(
+                    "Your acknowledgement has been recorded."
+                )
+
+                st.rerun()
+
+
+# ---------------------------------------------------------
+# EXPORT
+# ---------------------------------------------------------
 
 elif page == "Export to Excel":
-    st.header("Export Records")
-    st.write("Download the filing system records as an Excel workbook.")
 
-    files = get_files()
-    movements = get_movements()
-    users = get_users()
+    st.title("📊 Export to Excel")
 
-    excel_file = create_excel_file(
-        files=files,
-        movements=movements,
-        users=users,
-    )
+    if not is_admin():
 
-    st.download_button(
-        label="⬇️ Download Excel Report",
-        data=excel_file,
-        file_name="digital_file_tracking_report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+        st.warning(
+            "Only administrators can export system records."
+        )
+
+    else:
+
+        st.write(
+            "Export the item register, movement history "
+            "and user records."
+        )
+
+        if st.button(
+            "Prepare Excel Report"
+        ):
+
+            excel_file = create_excel_export()
+
+            st.download_button(
+                label="⬇️ Download Excel Report",
+                data=excel_file,
+                file_name="library_tracking_report.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                )
+            )

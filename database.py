@@ -1,23 +1,23 @@
 import sqlite3
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "filing_system.db"
+DB_PATH = DATA_DIR / "library_tracking.db"
 
 DATA_DIR.mkdir(exist_ok=True)
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
 def initialize_database():
-    conn = get_connection()
-    cursor = conn.cursor()
+    connection = get_connection()
+    cursor = connection.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -25,17 +25,22 @@ def initialize_database():
             name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
             department TEXT NOT NULL,
+            section TEXT,
             staff_number TEXT NOT NULL UNIQUE,
+            role TEXT NOT NULL DEFAULT 'User',
+            oath_acknowledged INTEGER NOT NULL DEFAULT 0,
+            oath_date TEXT,
             created_at TEXT NOT NULL
         )
     """)
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS files (
+        CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_number TEXT NOT NULL UNIQUE,
-            file_name TEXT NOT NULL,
+            item_id TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
             department TEXT NOT NULL,
+            section TEXT,
             barcode TEXT NOT NULL UNIQUE,
             status TEXT NOT NULL DEFAULT 'AVAILABLE',
             current_holder_id INTEGER,
@@ -45,259 +50,443 @@ def initialize_database():
     """)
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS file_movements (
+        CREATE TABLE IF NOT EXISTS item_movements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
             action TEXT NOT NULL,
             movement_time TEXT NOT NULL,
             remarks TEXT,
-            FOREIGN KEY (file_id) REFERENCES files(id),
+            FOREIGN KEY (item_id) REFERENCES items(id),
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
 
-    conn.commit()
-    conn.close()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            notification_type TEXT NOT NULL DEFAULT 'INFO',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    connection.commit()
+    connection.close()
 
 
-def add_user(name, email, department, staff_number):
-    conn = get_connection()
-    cursor = conn.cursor()
+# ---------------------------------------------------------
+# USERS
+# ---------------------------------------------------------
+
+def add_user(name, email, department, section, staff_number, role):
+    connection = get_connection()
 
     try:
-        cursor.execute("""
+        connection.execute("""
             INSERT INTO users (
-                name, email, department, staff_number, created_at
+                name,
+                email,
+                department,
+                section,
+                staff_number,
+                role,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            name,
-            email,
-            department,
-            staff_number,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            name.strip(),
+            email.strip().lower(),
+            department.strip(),
+            section.strip() if section else None,
+            staff_number.strip(),
+            role,
+            datetime.now().isoformat(timespec="seconds")
         ))
 
-        conn.commit()
+        connection.commit()
         return True, "User registered successfully."
 
-    except sqlite3.IntegrityError:
-        return False, "Email or staff number already exists."
+    except sqlite3.IntegrityError as error:
+        if "email" in str(error).lower():
+            return False, "That email is already registered."
+
+        if "staff_number" in str(error).lower():
+            return False, "That staff number is already registered."
+
+        return False, "Could not register user."
 
     finally:
-        conn.close()
+        connection.close()
 
 
 def get_users():
-    conn = get_connection()
+    connection = get_connection()
 
-    users = conn.execute("""
-        SELECT *
+    rows = connection.execute("""
+        SELECT
+            id,
+            name,
+            email,
+            department,
+            section,
+            staff_number,
+            role,
+            oath_acknowledged,
+            oath_date,
+            created_at
         FROM users
         ORDER BY name
     """).fetchall()
 
-    conn.close()
-    return users
+    connection.close()
+    return [dict(row) for row in rows]
 
 
-def add_file(file_number, file_name, department, barcode):
-    conn = get_connection()
-    cursor = conn.cursor()
+def acknowledge_oath(user_id):
+    connection = get_connection()
+
+    connection.execute("""
+        UPDATE users
+        SET oath_acknowledged = 1,
+            oath_date = ?
+        WHERE id = ?
+    """, (
+        datetime.now().isoformat(timespec="seconds"),
+        user_id
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+# ---------------------------------------------------------
+# ITEMS / BOOKS
+# ---------------------------------------------------------
+
+def generate_item_id():
+    connection = get_connection()
+
+    row = connection.execute("""
+        SELECT id
+        FROM items
+        ORDER BY id DESC
+        LIMIT 1
+    """).fetchone()
+
+    connection.close()
+
+    if row is None:
+        number = 1
+    else:
+        number = row["id"] + 1
+
+    return f"LIB-{number:06d}"
+
+
+def add_item(title, department, section):
+    item_id = generate_item_id()
+    barcode = item_id.replace("-", "")
+
+    connection = get_connection()
 
     try:
-        cursor.execute("""
-            INSERT INTO files (
-                file_number,
-                file_name,
+        connection.execute("""
+            INSERT INTO items (
+                item_id,
+                title,
                 department,
+                section,
                 barcode,
                 status,
                 created_at
             )
-            VALUES (?, ?, ?, ?, 'AVAILABLE', ?)
+            VALUES (?, ?, ?, ?, ?, 'AVAILABLE', ?)
         """, (
-            file_number,
-            file_name,
-            department,
+            item_id,
+            title.strip(),
+            department.strip(),
+            section.strip() if section else None,
             barcode,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now().isoformat(timespec="seconds")
         ))
 
-        conn.commit()
-        return True, "File registered successfully."
+        connection.commit()
+
+        return True, {
+            "item_id": item_id,
+            "barcode": barcode
+        }
 
     except sqlite3.IntegrityError:
-        return False, "File number or barcode already exists."
+        return False, "Could not register item."
 
     finally:
-        conn.close()
+        connection.close()
 
 
-def get_files():
-    conn = get_connection()
+def get_items():
+    connection = get_connection()
 
-    files = conn.execute("""
+    rows = connection.execute("""
         SELECT
-            f.*,
-            u.name AS current_holder,
-            u.email AS holder_email
-        FROM files f
-        LEFT JOIN users u
-            ON f.current_holder_id = u.id
-        ORDER BY f.file_number
+            items.id,
+            items.item_id,
+            items.title,
+            items.department,
+            items.section,
+            items.barcode,
+            items.status,
+            items.current_holder_id,
+            users.name AS current_holder,
+            users.email AS holder_email,
+            items.created_at
+        FROM items
+        LEFT JOIN users
+            ON items.current_holder_id = users.id
+        ORDER BY items.id DESC
     """).fetchall()
 
-    conn.close()
-    return files
+    connection.close()
+    return [dict(row) for row in rows]
 
 
-def find_file(search_value):
-    conn = get_connection()
+def find_item(search_value):
+    connection = get_connection()
 
-    file = conn.execute("""
+    search_value = search_value.strip()
+
+    row = connection.execute("""
         SELECT
-            f.*,
-            u.name AS current_holder,
-            u.email AS holder_email
-        FROM files f
-        LEFT JOIN users u
-            ON f.current_holder_id = u.id
+            items.id,
+            items.item_id,
+            items.title,
+            items.department,
+            items.section,
+            items.barcode,
+            items.status,
+            items.current_holder_id,
+            users.name AS current_holder,
+            users.email AS holder_email
+        FROM items
+        LEFT JOIN users
+            ON items.current_holder_id = users.id
         WHERE
-            f.file_number = ?
-            OR f.barcode = ?
-            OR LOWER(f.file_name) LIKE LOWER(?)
+            items.item_id = ?
+            OR items.barcode = ?
+            OR items.title LIKE ?
         LIMIT 1
     """, (
         search_value,
         search_value,
-        f"%{search_value}%",
+        f"%{search_value}%"
     )).fetchone()
 
-    conn.close()
-    return file
+    connection.close()
+
+    return dict(row) if row else None
 
 
-def pick_file(file_id, user_id, remarks=""):
-    conn = get_connection()
-    cursor = conn.cursor()
+# ---------------------------------------------------------
+# ISSUE / RETURN
+# ---------------------------------------------------------
 
-    try:
-        file = cursor.execute("""
-            SELECT *
-            FROM files
-            WHERE id = ?
-        """, (file_id,)).fetchone()
+def issue_item(item_id, user_id, remarks=""):
+    connection = get_connection()
 
-        if not file:
-            return False, "File not found."
+    item = connection.execute("""
+        SELECT *
+        FROM items
+        WHERE id = ?
+    """, (item_id,)).fetchone()
 
-        if file["status"] == "OUT":
-            return False, "This file is already out."
+    if not item:
+        connection.close()
+        return False, "Item not found."
 
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if item["status"] == "BORROWED":
+        connection.close()
+        return False, "This item is already borrowed."
 
-        cursor.execute("""
-            UPDATE files
-            SET status = 'OUT',
-                current_holder_id = ?
-            WHERE id = ?
-        """, (user_id, file_id))
+    now = datetime.now().isoformat(timespec="seconds")
 
-        cursor.execute("""
-            INSERT INTO file_movements (
-                file_id,
-                user_id,
-                action,
-                movement_time,
-                remarks
-            )
-            VALUES (?, ?, 'PICKED', ?, ?)
-        """, (file_id, user_id, now, remarks))
+    connection.execute("""
+        UPDATE items
+        SET status = 'BORROWED',
+            current_holder_id = ?
+        WHERE id = ?
+    """, (
+        user_id,
+        item_id
+    ))
 
-        conn.commit()
-        return True, "File successfully picked."
+    connection.execute("""
+        INSERT INTO item_movements (
+            item_id,
+            user_id,
+            action,
+            movement_time,
+            remarks
+        )
+        VALUES (?, ?, 'ISSUED', ?, ?)
+    """, (
+        item_id,
+        user_id,
+        now,
+        remarks
+    ))
 
-    except Exception as e:
-        conn.rollback()
-        return False, f"Error: {e}"
+    connection.commit()
+    connection.close()
 
-    finally:
-        conn.close()
+    return True, "Item issued successfully."
 
 
-def return_file(file_id, user_id, remarks=""):
-    conn = get_connection()
-    cursor = conn.cursor()
+def return_item(item_id, user_id, remarks=""):
+    connection = get_connection()
 
-    try:
-        file = cursor.execute("""
-            SELECT *
-            FROM files
-            WHERE id = ?
-        """, (file_id,)).fetchone()
+    item = connection.execute("""
+        SELECT *
+        FROM items
+        WHERE id = ?
+    """, (item_id,)).fetchone()
 
-        if not file:
-            return False, "File not found."
+    if not item:
+        connection.close()
+        return False, "Item not found."
 
-        if file["status"] == "AVAILABLE":
-            return False, "This file is already available."
+    if item["status"] == "AVAILABLE":
+        connection.close()
+        return False, "This item is already available."
 
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_holder = item["current_holder_id"]
 
-        cursor.execute("""
-            UPDATE files
-            SET status = 'AVAILABLE',
-                current_holder_id = NULL
-            WHERE id = ?
-        """, (file_id,))
+    # Accountability check:
+    # A normal user can only return an item they currently hold.
+    if current_holder != user_id:
+        connection.close()
+        return False, "Only the current borrower can return this item."
 
-        cursor.execute("""
-            INSERT INTO file_movements (
-                file_id,
-                user_id,
-                action,
-                movement_time,
-                remarks
-            )
-            VALUES (?, ?, 'RETURNED', ?, ?)
-        """, (file_id, user_id, now, remarks))
+    now = datetime.now().isoformat(timespec="seconds")
 
-        conn.commit()
-        return True, "File successfully returned."
+    connection.execute("""
+        UPDATE items
+        SET status = 'AVAILABLE',
+            current_holder_id = NULL
+        WHERE id = ?
+    """, (item_id,))
 
-    except Exception as e:
-        conn.rollback()
-        return False, f"Error: {e}"
+    connection.execute("""
+        INSERT INTO item_movements (
+            item_id,
+            user_id,
+            action,
+            movement_time,
+            remarks
+        )
+        VALUES (?, ?, 'RETURNED', ?, ?)
+    """, (
+        item_id,
+        user_id,
+        now,
+        remarks
+    ))
 
-    finally:
-        conn.close()
+    connection.commit()
+    connection.close()
 
+    return True, "Item returned successfully."
+
+
+# ---------------------------------------------------------
+# MOVEMENT HISTORY
+# ---------------------------------------------------------
 
 def get_movements():
-    conn = get_connection()
+    connection = get_connection()
 
-    movements = conn.execute("""
+    rows = connection.execute("""
         SELECT
-            m.id,
-            f.file_number,
-            f.file_name,
-            f.barcode,
-            u.name,
-            u.email,
-            u.department,
-            u.staff_number,
-            m.action,
-            m.movement_time,
-            m.remarks
-        FROM file_movements m
-        INNER JOIN files f
-            ON m.file_id = f.id
-        INNER JOIN users u
-            ON m.user_id = u.id
-        ORDER BY m.movement_time DESC
+            item_movements.id,
+            items.item_id,
+            items.title,
+            items.barcode,
+            users.name,
+            users.email,
+            users.department,
+            users.section,
+            users.staff_number,
+            item_movements.action,
+            item_movements.movement_time,
+            item_movements.remarks
+        FROM item_movements
+        JOIN items
+            ON item_movements.item_id = items.id
+        JOIN users
+            ON item_movements.user_id = users.id
+        ORDER BY item_movements.movement_time DESC
     """).fetchall()
 
-    conn.close()
-    return movements
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------
+# NOTIFICATIONS
+# ---------------------------------------------------------
+
+def create_notification(
+    title,
+    message,
+    notification_type="INFO",
+    user_id=None
+):
+    connection = get_connection()
+
+    connection.execute("""
+        INSERT INTO notifications (
+            user_id,
+            title,
+            message,
+            notification_type,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        title,
+        message,
+        notification_type,
+        datetime.now().isoformat(timespec="seconds")
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+def get_notifications(user_id=None):
+    connection = get_connection()
+
+    if user_id is None:
+        rows = connection.execute("""
+            SELECT *
+            FROM notifications
+            ORDER BY created_at DESC
+        """).fetchall()
+    else:
+        rows = connection.execute("""
+            SELECT *
+            FROM notifications
+            WHERE user_id IS NULL
+               OR user_id = ?
+            ORDER BY created_at DESC
+        """, (user_id,)).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]

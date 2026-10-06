@@ -1,38 +1,43 @@
 import pandas as pd
 from io import BytesIO
 
+from database import get_items, get_movements, get_users
 
-def create_excel_file(files, movements, users):
-    """Create an Excel workbook containing system records."""
 
-    files_data = [dict(row) for row in files]
-    movements_data = [dict(row) for row in movements]
-    users_data = [dict(row) for row in users]
+def create_excel_export():
+    items = get_items()
+    movements = get_movements()
+    users = get_users()
 
-    files_df = pd.DataFrame(files_data)
-    movements_df = pd.DataFrame(movements_data)
-    users_df = pd.DataFrame(users_data)
+    items_df = pd.DataFrame(items)
+    movements_df = pd.DataFrame(movements)
+    users_df = pd.DataFrame(users)
 
     output = BytesIO()
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        files_df.to_excel(
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+
+        items_df.to_excel(
             writer,
-            sheet_name="File Register",
             index=False,
+            sheet_name="Items"
         )
 
         movements_df.to_excel(
             writer,
-            sheet_name="Movement History",
             index=False,
+            sheet_name="Movement History"
         )
 
         users_df.to_excel(
             writer,
-            sheet_name="Users",
             index=False,
+            sheet_name="Users"
         )
 
     output.seek(0)
+
     return output

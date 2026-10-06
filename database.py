@@ -1,4 +1,6 @@
 import sqlite3
+import hashlib
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -9,13 +11,73 @@ DB_PATH = DATA_DIR / "library_tracking.db"
 DATA_DIR.mkdir(exist_ok=True)
 
 
+# ---------------------------------------------------------
+# DATABASE CONNECTION
+# ---------------------------------------------------------
+
 def get_connection():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
 
 
+# ---------------------------------------------------------
+# PASSWORD SECURITY
+# ---------------------------------------------------------
+
+def hash_password(password):
+    """
+    Creates a secure password hash using PBKDF2.
+    """
+
+    salt = secrets.token_bytes(16)
+
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        100_000
+    )
+
+    return (
+        salt.hex()
+        + ":"
+        + password_hash.hex()
+    )
+
+
+def verify_password(password, stored_hash):
+    """
+    Verifies a password against its stored hash.
+    """
+
+    try:
+        salt_hex, hash_hex = stored_hash.split(":")
+
+        salt = bytes.fromhex(salt_hex)
+
+        password_hash = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            100_000
+        )
+
+        return secrets.compare_digest(
+            password_hash.hex(),
+            hash_hex
+        )
+
+    except (ValueError, AttributeError):
+        return False
+
+
+# ---------------------------------------------------------
+# DATABASE INITIALIZATION
+# ---------------------------------------------------------
+
 def initialize_database():
+
     connection = get_connection()
     cursor = connection.cursor()
 
@@ -28,11 +90,38 @@ def initialize_database():
             section TEXT,
             staff_number TEXT NOT NULL UNIQUE,
             role TEXT NOT NULL DEFAULT 'User',
+            password_hash TEXT,
             oath_acknowledged INTEGER NOT NULL DEFAULT 0,
             oath_date TEXT,
             created_at TEXT NOT NULL
         )
     """)
+
+    # -----------------------------------------------------
+    # DATABASE MIGRATION
+    # -----------------------------------------------------
+
+    # If the database already existed before passwords were
+    # added, add the password_hash column.
+    columns = cursor.execute(
+        "PRAGMA table_info(users)"
+    ).fetchall()
+
+    column_names = [
+        column["name"]
+        for column in columns
+    ]
+
+    if "password_hash" not in column_names:
+
+        cursor.execute("""
+            ALTER TABLE users
+            ADD COLUMN password_hash TEXT
+        """)
+
+    # -----------------------------------------------------
+    # ITEMS
+    # -----------------------------------------------------
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
@@ -49,6 +138,10 @@ def initialize_database():
         )
     """)
 
+    # -----------------------------------------------------
+    # MOVEMENTS
+    # -----------------------------------------------------
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS item_movements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +154,10 @@ def initialize_database():
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+
+    # -----------------------------------------------------
+    # NOTIFICATIONS
+    # -----------------------------------------------------
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notifications (
@@ -80,13 +177,85 @@ def initialize_database():
 
 
 # ---------------------------------------------------------
-# USERS
+# AUTHENTICATION
 # ---------------------------------------------------------
 
-def add_user(name, email, department, section, staff_number, role):
+def has_users():
+
+    connection = get_connection()
+
+    row = connection.execute("""
+        SELECT COUNT(*) AS count
+        FROM users
+    """).fetchone()
+
+    connection.close()
+
+    return row["count"] > 0
+
+
+def authenticate_user(staff_number, password):
+
+    connection = get_connection()
+
+    row = connection.execute("""
+        SELECT
+            id,
+            name,
+            email,
+            department,
+            section,
+            staff_number,
+            role,
+            password_hash,
+            oath_acknowledged,
+            oath_date,
+            created_at
+        FROM users
+        WHERE staff_number = ?
+    """, (
+        staff_number.strip(),
+    )).fetchone()
+
+    connection.close()
+
+    if not row:
+        return None
+
+    if not row["password_hash"]:
+        return None
+
+    if verify_password(
+        password,
+        row["password_hash"]
+    ):
+
+        return dict(row)
+
+    return None
+
+
+def create_first_admin(
+    name,
+    email,
+    department,
+    section,
+    staff_number,
+    password
+):
+
     connection = get_connection()
 
     try:
+
+        existing = connection.execute("""
+            SELECT COUNT(*) AS count
+            FROM users
+        """).fetchone()
+
+        if existing["count"] > 0:
+            return False, "An administrator already exists."
+
         connection.execute("""
             INSERT INTO users (
                 name,
@@ -95,9 +264,68 @@ def add_user(name, email, department, section, staff_number, role):
                 section,
                 staff_number,
                 role,
+                password_hash,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'Admin', ?, ?)
+        """, (
+            name.strip(),
+            email.strip().lower(),
+            department.strip(),
+            section.strip() if section else None,
+            staff_number.strip(),
+            hash_password(password),
+            datetime.now().isoformat(timespec="seconds")
+        ))
+
+        connection.commit()
+
+        return True, "Administrator account created successfully."
+
+    except sqlite3.IntegrityError as error:
+
+        if "email" in str(error).lower():
+            return False, "That email is already registered."
+
+        if "staff_number" in str(error).lower():
+            return False, "That staff number is already registered."
+
+        return False, "Could not create administrator."
+
+    finally:
+        connection.close()
+
+
+# ---------------------------------------------------------
+# USERS
+# ---------------------------------------------------------
+
+def add_user(
+    name,
+    email,
+    department,
+    section,
+    staff_number,
+    role,
+    password
+):
+
+    connection = get_connection()
+
+    try:
+
+        connection.execute("""
+            INSERT INTO users (
+                name,
+                email,
+                department,
+                section,
+                staff_number,
+                role,
+                password_hash,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             name.strip(),
             email.strip().lower(),
@@ -105,13 +333,16 @@ def add_user(name, email, department, section, staff_number, role):
             section.strip() if section else None,
             staff_number.strip(),
             role,
+            hash_password(password),
             datetime.now().isoformat(timespec="seconds")
         ))
 
         connection.commit()
+
         return True, "User registered successfully."
 
     except sqlite3.IntegrityError as error:
+
         if "email" in str(error).lower():
             return False, "That email is already registered."
 
@@ -125,6 +356,7 @@ def add_user(name, email, department, section, staff_number, role):
 
 
 def get_users():
+
     connection = get_connection()
 
     rows = connection.execute("""
@@ -144,10 +376,12 @@ def get_users():
     """).fetchall()
 
     connection.close()
+
     return [dict(row) for row in rows]
 
 
 def acknowledge_oath(user_id):
+
     connection = get_connection()
 
     connection.execute("""
@@ -169,6 +403,7 @@ def acknowledge_oath(user_id):
 # ---------------------------------------------------------
 
 def generate_item_id():
+
     connection = get_connection()
 
     row = connection.execute("""
@@ -189,12 +424,14 @@ def generate_item_id():
 
 
 def add_item(title, department, section):
+
     item_id = generate_item_id()
     barcode = item_id.replace("-", "")
 
     connection = get_connection()
 
     try:
+
         connection.execute("""
             INSERT INTO items (
                 item_id,
@@ -223,13 +460,16 @@ def add_item(title, department, section):
         }
 
     except sqlite3.IntegrityError:
+
         return False, "Could not register item."
 
     finally:
+
         connection.close()
 
 
 def get_items():
+
     connection = get_connection()
 
     rows = connection.execute("""
@@ -252,10 +492,12 @@ def get_items():
     """).fetchall()
 
     connection.close()
+
     return [dict(row) for row in rows]
 
 
 def find_item(search_value):
+
     connection = get_connection()
 
     search_value = search_value.strip()
@@ -296,6 +538,7 @@ def find_item(search_value):
 # ---------------------------------------------------------
 
 def issue_item(item_id, user_id, remarks=""):
+
     connection = get_connection()
 
     item = connection.execute("""
@@ -305,11 +548,15 @@ def issue_item(item_id, user_id, remarks=""):
     """, (item_id,)).fetchone()
 
     if not item:
+
         connection.close()
+
         return False, "Item not found."
 
     if item["status"] == "BORROWED":
+
         connection.close()
+
         return False, "This item is already borrowed."
 
     now = datetime.now().isoformat(timespec="seconds")
@@ -347,6 +594,7 @@ def issue_item(item_id, user_id, remarks=""):
 
 
 def return_item(item_id, user_id, remarks=""):
+
     connection = get_connection()
 
     item = connection.execute("""
@@ -356,19 +604,23 @@ def return_item(item_id, user_id, remarks=""):
     """, (item_id,)).fetchone()
 
     if not item:
+
         connection.close()
+
         return False, "Item not found."
 
     if item["status"] == "AVAILABLE":
+
         connection.close()
+
         return False, "This item is already available."
 
     current_holder = item["current_holder_id"]
 
-    # Accountability check:
-    # A normal user can only return an item they currently hold.
     if current_holder != user_id:
+
         connection.close()
+
         return False, "Only the current borrower can return this item."
 
     now = datetime.now().isoformat(timespec="seconds")
@@ -407,6 +659,7 @@ def return_item(item_id, user_id, remarks=""):
 # ---------------------------------------------------------
 
 def get_movements():
+
     connection = get_connection()
 
     rows = connection.execute("""
@@ -446,6 +699,7 @@ def create_notification(
     notification_type="INFO",
     user_id=None
 ):
+
     connection = get_connection()
 
     connection.execute("""
@@ -470,15 +724,19 @@ def create_notification(
 
 
 def get_notifications(user_id=None):
+
     connection = get_connection()
 
     if user_id is None:
+
         rows = connection.execute("""
             SELECT *
             FROM notifications
             ORDER BY created_at DESC
         """).fetchall()
+
     else:
+
         rows = connection.execute("""
             SELECT *
             FROM notifications

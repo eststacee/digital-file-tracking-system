@@ -1,5 +1,4 @@
 import streamlit as st
-from pathlib import Path
 
 from database import (
     initialize_database,
@@ -27,8 +26,8 @@ from barcode import create_barcode_image
 # =========================================================
 
 st.set_page_config(
-    page_title="Library Book Tracking System",
-    page_icon="📚",
+    page_title="Digital Filing System",
+    page_icon="📁",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -42,19 +41,18 @@ st.markdown(
     """
     <style>
 
-    /* Main background */
     .stApp {
         background-color: #f6f8fb;
     }
 
-    /* Main content */
     .main .block-container {
         padding-top: 2rem;
         padding-bottom: 3rem;
         max-width: 1400px;
     }
 
-    /* Sidebar */
+    /* SIDEBAR */
+
     section[data-testid="stSidebar"] {
         background-color: #111827;
     }
@@ -67,52 +65,55 @@ st.markdown(
         color: #e5e7eb;
     }
 
-    section[data-testid="stSidebar"] .stRadio label:hover {
-        color: white;
-    }
+    /* HEADINGS */
 
-    /* Titles */
     h1 {
         font-weight: 700;
         color: #111827;
     }
 
-    h2, h3 {
+    h2,
+    h3 {
         color: #1f2937;
     }
 
-    /* Metric cards */
+    /* METRIC CARDS */
+
     div[data-testid="stMetric"] {
         background-color: white;
         border: 1px solid #e5e7eb;
         border-radius: 14px;
         padding: 18px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
 
     div[data-testid="stMetricLabel"] {
         font-weight: 600;
     }
 
-    /* Buttons */
+    /* BUTTONS */
+
     .stButton > button {
         border-radius: 9px;
         font-weight: 600;
         min-height: 42px;
     }
 
-    /* Inputs */
-    input, textarea {
+    /* INPUTS */
+
+    input,
+    textarea {
         border-radius: 8px !important;
     }
 
-    /* Cards */
+    /* CARDS */
+
     .custom-card {
         background: white;
         padding: 24px;
         border-radius: 14px;
         border: 1px solid #e5e7eb;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
         margin-bottom: 20px;
     }
 
@@ -125,16 +126,6 @@ st.markdown(
         margin-bottom: 25px;
     }
 
-    .status-available {
-        color: #15803d;
-        font-weight: 700;
-    }
-
-    .status-borrowed {
-        color: #dc2626;
-        font-weight: 700;
-    }
-
     .barcode-card {
         background: white;
         padding: 25px;
@@ -143,9 +134,14 @@ st.markdown(
         text-align: center;
     }
 
-    .small-text {
-        color: #6b7280;
-        font-size: 0.9rem;
+    .status-available {
+        color: #15803d;
+        font-weight: 700;
+    }
+
+    .status-out {
+        color: #dc2626;
+        font-weight: 700;
     }
 
     </style>
@@ -207,20 +203,22 @@ st.sidebar.markdown(
         text-align:center;
         padding:15px 5px 25px 5px;
     ">
-        <div style="font-size:42px;">📚</div>
+        <div style="font-size:42px;">📁</div>
+
         <div style="
             font-size:20px;
             font-weight:700;
             color:white;
         ">
-            LIBRARY SYSTEM
+            DIGITAL FILING SYSTEM
         </div>
+
         <div style="
             font-size:12px;
             color:#9ca3af;
             margin-top:5px;
         ">
-            Book Tracking & Accountability
+            Physical File Tracking & Accountability
         </div>
     </div>
     """,
@@ -234,7 +232,7 @@ st.sidebar.markdown(
 
 if not has_users():
 
-    st.title("📚 Library Book Tracking System")
+    st.title("📁 Digital Filing System")
 
     st.subheader("Create First Administrator")
 
@@ -289,25 +287,46 @@ if not has_users():
     if create_admin:
 
         if not admin_name.strip():
-            st.error("Please enter the administrator's name.")
+
+            st.error(
+                "Please enter the administrator's name."
+            )
 
         elif not admin_email.strip():
-            st.error("Please enter the organization email.")
+
+            st.error(
+                "Please enter the organization email."
+            )
 
         elif not admin_department.strip():
-            st.error("Please enter the department.")
+
+            st.error(
+                "Please enter the department."
+            )
 
         elif not admin_staff_number.strip():
-            st.error("Please enter the staff number.")
+
+            st.error(
+                "Please enter the staff number."
+            )
 
         elif not admin_password:
-            st.error("Please create a password.")
+
+            st.error(
+                "Please create a password."
+            )
 
         elif len(admin_password) < 8:
-            st.error("Password must contain at least 8 characters.")
+
+            st.error(
+                "Password must contain at least 8 characters."
+            )
 
         elif admin_password != admin_confirm_password:
-            st.error("The passwords do not match.")
+
+            st.error(
+                "The passwords do not match."
+            )
 
         else:
 
@@ -325,13 +344,14 @@ if not has_users():
                 st.success(message)
 
                 st.info(
-                    "You can now log in using your staff number "
-                    "and password."
+                    "You can now log in using your "
+                    "staff number and password."
                 )
 
                 st.rerun()
 
             else:
+
                 st.error(message)
 
     st.stop()
@@ -349,11 +369,15 @@ if st.session_state.logged_in_user is None:
             text-align:center;
             padding:30px 0 15px 0;
         ">
-            <div style="font-size:65px;">📚</div>
-            <h1>Library Book Tracking System</h1>
+
+            <div style="font-size:65px;">📁</div>
+
+            <h1>Digital Filing System</h1>
+
             <p style="color:#6b7280;">
-                Book Tracking & Accountability
+                Physical File Tracking & Accountability
             </p>
+
         </div>
         """,
         unsafe_allow_html=True,
@@ -395,7 +419,10 @@ if st.session_state.logged_in_user is None:
                 use_container_width=True,
             )
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     if login_button:
 
@@ -415,6 +442,7 @@ if st.session_state.logged_in_user is None:
             if user:
 
                 st.session_state.logged_in_user = user
+
                 st.rerun()
 
             else:
@@ -447,9 +475,14 @@ st.sidebar.markdown(
         border-radius:10px;
         margin-bottom:15px;
     ">
-        <div style="font-size:12px;color:#9ca3af;">
+
+        <div style="
+            font-size:12px;
+            color:#9ca3af;
+        ">
             SIGNED IN AS
         </div>
+
         <div style="
             font-size:16px;
             font-weight:700;
@@ -457,6 +490,7 @@ st.sidebar.markdown(
         ">
             {current_user['name']}
         </div>
+
         <div style="
             font-size:12px;
             color:#d1d5db;
@@ -464,6 +498,7 @@ st.sidebar.markdown(
         ">
             {current_user['staff_number']}
         </div>
+
         <div style="
             font-size:12px;
             color:#93c5fd;
@@ -471,6 +506,7 @@ st.sidebar.markdown(
         ">
             {current_user['role']}
         </div>
+
     </div>
     """,
     unsafe_allow_html=True,
@@ -494,10 +530,10 @@ if st.sidebar.button(
 
 menu = [
     "🏠 Dashboard",
-    "📷 Scan / Issue / Return",
-    "🔎 Search Items",
+    "📷 Scan / Issue / Return File",
+    "🔎 Search Files",
     "📋 Movement History",
-    "🔔 Notifications",
+    "🔔 Sona Notifications",
     "📜 Oath & Responsibilities",
     "📊 Export to Excel",
 ]
@@ -511,7 +547,7 @@ if is_admin():
 
     menu.insert(
         2,
-        "📖 Register Book / Item",
+        "📁 Register File",
     )
 
 
@@ -527,7 +563,7 @@ page = st.sidebar.radio(
 
 if page == "🏠 Dashboard":
 
-    st.title("📚 Dashboard")
+    st.title("📁 Dashboard")
 
     st.write(
         f"Welcome back, **{current_user['name']}**."
@@ -542,15 +578,15 @@ if page == "🏠 Dashboard":
 
     items = get_items()
 
-    total_items = len(items)
+    total_files = len(items)
 
-    available = len([
+    available_files = len([
         item
         for item in items
         if item["status"] == "AVAILABLE"
     ])
 
-    borrowed = len([
+    files_out = len([
         item
         for item in items
         if item["status"] == "BORROWED"
@@ -559,23 +595,22 @@ if page == "🏠 Dashboard":
     col1, col2, col3 = st.columns(3)
 
     col1.metric(
-        "📚 Total Books",
-        total_items,
+        "📁 Total Files",
+        total_files,
     )
 
     col2.metric(
-        "🟢 Available",
-        available,
+        "🟢 Available Files",
+        available_files,
     )
 
     col3.metric(
-        "🔴 Borrowed",
-        borrowed,
+        "🔴 Files Out",
+        files_out,
     )
 
     st.divider()
 
-    # Quick actions
     st.subheader("⚡ Quick Actions")
 
     action1, action2, action3 = st.columns(3)
@@ -583,11 +618,12 @@ if page == "🏠 Dashboard":
     with action1:
 
         if st.button(
-            "📷 Scan Book",
+            "📷 Scan File",
             use_container_width=True,
         ):
+
             st.info(
-                "Select 'Scan / Issue / Return' "
+                "Select 'Scan / Issue / Return File' "
                 "from the sidebar."
             )
 
@@ -596,38 +632,40 @@ if page == "🏠 Dashboard":
         if is_admin():
 
             if st.button(
-                "📖 Register Book",
+                "📁 Register File",
                 use_container_width=True,
             ):
+
                 st.info(
-                    "Select 'Register Book / Item' "
+                    "Select 'Register File' "
                     "from the sidebar."
                 )
 
     with action3:
 
         if st.button(
-            "🔎 Search Books",
+            "🔎 Search Files",
             use_container_width=True,
         ):
+
             st.info(
-                "Select 'Search Items' "
+                "Select 'Search Files' "
                 "from the sidebar."
             )
 
     st.divider()
 
-    st.subheader("🔴 Currently Borrowed")
+    st.subheader("🔴 Currently Out")
 
-    borrowed_items = [
+    files_out_list = [
         item
         for item in items
         if item["status"] == "BORROWED"
     ]
 
-    if borrowed_items:
+    if files_out_list:
 
-        for item in borrowed_items:
+        for item in files_out_list:
 
             with st.container():
 
@@ -643,16 +681,16 @@ if page == "🏠 Dashboard":
                 with col1:
 
                     st.markdown(
-                        f"### 📖 {item['title']}"
+                        f"### 📁 {item['title']}"
                     )
 
                     st.caption(
-                        f"Item ID: {item['item_id']}"
+                        f"File ID: {item['item_id']}"
                     )
 
                 with col2:
 
-                    st.write("**Borrower**")
+                    st.write("**Current Holder**")
 
                     st.write(
                         item["current_holder"]
@@ -676,7 +714,7 @@ if page == "🏠 Dashboard":
     else:
 
         st.success(
-            "🟢 No books are currently borrowed."
+            "🟢 No files are currently out."
         )
 
 
@@ -807,36 +845,36 @@ elif page == "👤 Register User":
 
 
 # =========================================================
-# REGISTER BOOK / ITEM
+# REGISTER FILE
 # =========================================================
 
-elif page == "📖 Register Book / Item":
+elif page == "📁 Register File":
 
     if not is_admin():
 
         st.error(
-            "Only administrators can register books/items."
+            "Only administrators can register files."
         )
 
         st.stop()
 
-    st.title("📖 Register Book / Item")
+    st.title("📁 Register File")
 
     st.write(
-        "Register a physical book/item and automatically "
-        "generate its unique tracking ID and barcode."
+        "Register a physical file and automatically "
+        "generate its unique File ID and barcode."
     )
 
     st.info(
-        "You do not need to enter a file number. "
-        "The system automatically creates a unique Item ID."
+        "No file number is required. The system "
+        "automatically generates a unique File ID."
     )
 
-    with st.form("register_item"):
+    with st.form("register_file"):
 
         title = st.text_input(
-            "Book / Item Title",
-            placeholder="e.g. Introduction to Information Science",
+            "File Name",
+            placeholder="e.g. Procurement Records",
         )
 
         department = st.text_input(
@@ -850,7 +888,7 @@ elif page == "📖 Register Book / Item":
         )
 
         submitted = st.form_submit_button(
-            "📖 Register Book / Item",
+            "📁 Register File",
             use_container_width=True,
         )
 
@@ -859,7 +897,7 @@ elif page == "📖 Register Book / Item":
         if not title.strip():
 
             st.error(
-                "Please enter the book/item title."
+                "Please enter the file name."
             )
 
         elif not department.strip():
@@ -879,10 +917,10 @@ elif page == "📖 Register Book / Item":
             if success:
 
                 st.success(
-                    "Book/item registered successfully!"
+                    "File registered successfully!"
                 )
 
-                st.subheader("Generated Item ID")
+                st.subheader("Generated File ID")
 
                 st.code(
                     result["item_id"],
@@ -924,13 +962,13 @@ elif page == "📖 Register Book / Item":
                     st.success(
                         "Barcode generated successfully. "
                         "Download and print it, then attach "
-                        "it to the physical book."
+                        "it to the physical file."
                     )
 
                 except Exception as error:
 
                     st.error(
-                        "The book was registered, but the "
+                        "The file was registered, but the "
                         f"barcode could not be generated: {error}"
                     )
 
@@ -940,35 +978,39 @@ elif page == "📖 Register Book / Item":
 
 
 # =========================================================
-# SCAN / ISSUE / RETURN
+# SCAN / ISSUE / RETURN FILE
 # =========================================================
 
-elif page == "📷 Scan / Issue / Return":
+elif page == "📷 Scan / Issue / Return File":
 
-    st.title("📷 Scan / Issue / Return")
+    st.title("📷 Scan / Issue / Return File")
 
     st.write(
-        "Use a USB barcode scanner to scan the barcode "
-        "attached to the physical book."
+        "Scan the barcode attached to the physical file "
+        "to record its movement."
     )
 
     if is_view_only():
 
         st.info(
             "👁 View Only access: you can scan and view "
-            "book information, but you cannot issue or "
-            "return books."
+            "file information, but you cannot issue or "
+            "return files."
         )
 
     st.markdown(
         """
         <div class="scan-card">
+
             <div style="font-size:55px;">📷</div>
-            <h2>Scan Book Barcode</h2>
+
+            <h2>Scan File Barcode</h2>
+
             <p>
                 Place your cursor in the field below and
-                scan the barcode on the physical book.
+                scan the barcode attached to the physical file.
             </p>
+
         </div>
         """,
         unsafe_allow_html=True,
@@ -989,7 +1031,7 @@ elif page == "📷 Scan / Issue / Return":
         if not item:
 
             st.error(
-                "❌ No book was found with that barcode."
+                "❌ No file was found with that barcode."
             )
 
             st.caption(
@@ -1007,7 +1049,7 @@ elif page == "📷 Scan / Issue / Return":
 
         st.divider()
 
-        st.subheader("📖 Book Information")
+        st.subheader("📁 File Information")
 
         info1, info2 = st.columns(2)
 
@@ -1018,7 +1060,7 @@ elif page == "📷 Scan / Issue / Return":
             )
 
             st.write(
-                f"**Item ID:** {item['item_id']}"
+                f"**File ID:** {item['item_id']}"
             )
 
             st.write(
@@ -1051,8 +1093,8 @@ elif page == "📷 Scan / Issue / Return":
 
                 st.markdown(
                     """
-                    <p class="status-borrowed">
-                    🔴 BORROWED
+                    <p class="status-out">
+                    🔴 FILE OUT
                     </p>
                     """,
                     unsafe_allow_html=True,
@@ -1061,7 +1103,7 @@ elif page == "📷 Scan / Issue / Return":
             if item["current_holder"]:
 
                 st.write(
-                    f"**Current Borrower:** "
+                    f"**Current Holder:** "
                     f"{item['current_holder']}"
                 )
 
@@ -1077,11 +1119,11 @@ elif page == "📷 Scan / Issue / Return":
             if item["status"] == "AVAILABLE":
 
                 st.success(
-                    "This book is available for lending."
+                    "This file is available."
                 )
 
                 if st.button(
-                    "📤 ISSUE BOOK",
+                    "📤 ISSUE FILE",
                     use_container_width=True,
                 ):
 
@@ -1106,7 +1148,7 @@ elif page == "📷 Scan / Issue / Return":
             else:
 
                 st.warning(
-                    f"This book is currently borrowed by "
+                    f"This file is currently with "
                     f"{item['current_holder']}."
                 )
 
@@ -1116,7 +1158,7 @@ elif page == "📷 Scan / Issue / Return":
                 ):
 
                     if st.button(
-                        "📥 RETURN BOOK",
+                        "📥 RETURN FILE",
                         use_container_width=True,
                     ):
 
@@ -1141,8 +1183,8 @@ elif page == "📷 Scan / Issue / Return":
                 elif is_admin():
 
                     st.info(
-                        "This book is assigned to another "
-                        "user. The current borrower should "
+                        "This file is assigned to another "
+                        "user. The current holder should "
                         "normally return it."
                     )
 
@@ -1152,24 +1194,25 @@ elif page == "📷 Scan / Issue / Return":
         ):
 
             clear_scanned_item()
+
             st.rerun()
 
 
 # =========================================================
-# SEARCH ITEMS
+# SEARCH FILES
 # =========================================================
 
-elif page == "🔎 Search Items":
+elif page == "🔎 Search Files":
 
-    st.title("🔎 Search Books")
+    st.title("🔎 Search Files")
 
     st.write(
-        "Search using an Item ID, barcode or book title."
+        "Search using a File ID, barcode or file name."
     )
 
     search = st.text_input(
         "Search",
-        placeholder="Enter title, Item ID or barcode...",
+        placeholder="Enter file name, File ID or barcode...",
     )
 
     if search.strip():
@@ -1181,7 +1224,7 @@ elif page == "🔎 Search Items":
         if item:
 
             st.success(
-                "✅ Book found."
+                "✅ File found."
             )
 
             col1, col2 = st.columns(2)
@@ -1189,11 +1232,11 @@ elif page == "🔎 Search Items":
             with col1:
 
                 st.markdown(
-                    f"### 📖 {item['title']}"
+                    f"### 📁 {item['title']}"
                 )
 
                 st.write(
-                    f"**Item ID:** {item['item_id']}"
+                    f"**File ID:** {item['item_id']}"
                 )
 
                 st.write(
@@ -1221,18 +1264,18 @@ elif page == "🔎 Search Items":
                 else:
 
                     st.error(
-                        "🔴 BORROWED"
+                        "🔴 FILE OUT"
                     )
 
                     st.write(
-                        f"**Current Borrower:** "
+                        f"**Current Holder:** "
                         f"{item['current_holder']}"
                     )
 
         else:
 
             st.warning(
-                "No matching book was found."
+                "No matching file was found."
             )
 
 
@@ -1242,10 +1285,10 @@ elif page == "🔎 Search Items":
 
 elif page == "📋 Movement History":
 
-    st.title("📋 Movement History")
+    st.title("📋 File Movement History")
 
     st.write(
-        "Complete record of book lending and returns."
+        "Complete record of file issues and returns."
     )
 
     movements = get_movements()
@@ -1261,20 +1304,21 @@ elif page == "📋 Movement History":
     else:
 
         st.info(
-            "No movement history is available yet."
+            "No file movement history is available yet."
         )
 
 
 # =========================================================
-# NOTIFICATIONS
+# SONA NOTIFICATIONS
 # =========================================================
 
-elif page == "🔔 Notifications":
+elif page == "🔔 Sona Notifications":
 
-    st.title("🔔 Notifications")
+    st.title("🔔 Sona Notifications")
 
     st.write(
-        "Alerts and system updates."
+        "View alerts, notifications and important "
+        "system updates."
     )
 
     notifications = get_notifications(
@@ -1328,17 +1372,18 @@ elif page == "📜 Oath & Responsibilities":
     st.info(
         "All users are expected to understand and "
         "follow these responsibilities when using "
-        "the book tracking system."
+        "the Digital Filing System."
     )
 
     st.subheader(
-        "Responsibilities of Credit / System Administrators"
+        "Responsibilities of Filing / System Administrators"
     )
 
     st.markdown(
         """
-        - Maintain accurate records of books/items.
-        - Ensure every item is properly registered.
+        - Maintain accurate records of physical files.
+        - Ensure every file is properly registered.
+        - Ensure every file has the correct barcode.
         - Ensure barcode scanning is performed during issue and return.
         - Maintain accurate movement and accountability records.
         - Manage user access appropriately.
@@ -1358,10 +1403,10 @@ elif page == "📜 Oath & Responsibilities":
         """
         - Provide accurate personal and staff information.
         - Use only their authorized account/access.
-        - Scan every item before taking it.
-        - Return borrowed items promptly.
-        - Do not transfer borrowed items to another person without authorization.
-        - Report lost or damaged items immediately.
+        - Scan every file before taking it.
+        - Return borrowed files promptly.
+        - Do not transfer files to another person without authorization.
+        - Report lost or damaged files immediately.
         - Report incorrect system records.
         - Protect their system access credentials.
         """
@@ -1421,7 +1466,7 @@ elif page == "📊 Export to Excel":
     else:
 
         st.write(
-            "Export the book register, movement history "
+            "Export the file register, movement history "
             "and user records."
         )
 
@@ -1435,7 +1480,7 @@ elif page == "📊 Export to Excel":
             st.download_button(
                 label="⬇️ Download Excel Report",
                 data=excel_file,
-                file_name="library_tracking_report.xlsx",
+                file_name="digital_filing_system_report.xlsx",
                 mime=(
                     "application/vnd.openxmlformats-officedocument."
                     "spreadsheetml.sheet"

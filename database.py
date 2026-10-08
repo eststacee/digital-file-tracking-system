@@ -4,84 +4,97 @@ import secrets
 from datetime import datetime
 from pathlib import Path
 
+
+# =========================================================
+# DATABASE LOCATION
+# =========================================================
+
 BASE_DIR = Path(__file__).resolve().parent
+
 DATA_DIR = BASE_DIR / "data"
+
 DB_PATH = DATA_DIR / "library_tracking.db"
 
 DATA_DIR.mkdir(exist_ok=True)
 
 
-# ---------------------------------------------------------
-# DATABASE CONNECTION
-# ---------------------------------------------------------
+# =========================================================
+# CONNECTION
+# =========================================================
 
 def get_connection():
     connection = sqlite3.connect(DB_PATH)
+
     connection.row_factory = sqlite3.Row
+
+    connection.execute(
+        "PRAGMA foreign_keys = ON"
+    )
+
     return connection
 
 
-# ---------------------------------------------------------
+# =========================================================
 # PASSWORD SECURITY
-# ---------------------------------------------------------
+# =========================================================
 
-def hash_password(password):
-    """
-    Creates a secure password hash using PBKDF2.
-    """
+def hash_password(password, salt=None):
 
-    salt = secrets.token_bytes(16)
+    if salt is None:
+        salt = secrets.token_hex(16)
 
     password_hash = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
-        salt,
-        100_000
-    )
+        salt.encode("utf-8"),
+        100_000,
+    ).hex()
 
-    return (
-        salt.hex()
-        + ":"
-        + password_hash.hex()
-    )
+    return f"{salt}${password_hash}"
 
 
-def verify_password(password, stored_hash):
-    """
-    Verifies a password against its stored hash.
-    """
+def verify_password(password, stored_password):
 
     try:
-        salt_hex, hash_hex = stored_hash.split(":")
 
-        salt = bytes.fromhex(salt_hex)
+        salt, stored_hash = stored_password.split(
+            "$",
+            1
+        )
 
         password_hash = hashlib.pbkdf2_hmac(
             "sha256",
             password.encode("utf-8"),
-            salt,
-            100_000
-        )
+            salt.encode("utf-8"),
+            100_000,
+        ).hex()
 
         return secrets.compare_digest(
-            password_hash.hex(),
-            hash_hex
+            password_hash,
+            stored_hash,
         )
 
     except (ValueError, AttributeError):
+
         return False
 
 
-# ---------------------------------------------------------
+# =========================================================
 # DATABASE INITIALIZATION
-# ---------------------------------------------------------
+# =========================================================
 
 def initialize_database():
 
     connection = get_connection()
+
     cursor = connection.cursor()
 
-    cursor.execute("""
+    # -----------------------------------------------------
+    # USERS
+    # -----------------------------------------------------
+
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -95,35 +108,15 @@ def initialize_database():
             oath_date TEXT,
             created_at TEXT NOT NULL
         )
-    """)
-
-    # -----------------------------------------------------
-    # DATABASE MIGRATION
-    # -----------------------------------------------------
-
-    # If the database already existed before passwords were
-    # added, add the password_hash column.
-    columns = cursor.execute(
-        "PRAGMA table_info(users)"
-    ).fetchall()
-
-    column_names = [
-        column["name"]
-        for column in columns
-    ]
-
-    if "password_hash" not in column_names:
-
-        cursor.execute("""
-            ALTER TABLE users
-            ADD COLUMN password_hash TEXT
-        """)
+        """
+    )
 
     # -----------------------------------------------------
     # ITEMS
     # -----------------------------------------------------
 
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_id TEXT NOT NULL UNIQUE,
@@ -134,15 +127,19 @@ def initialize_database():
             status TEXT NOT NULL DEFAULT 'AVAILABLE',
             current_holder_id INTEGER,
             created_at TEXT NOT NULL,
-            FOREIGN KEY (current_holder_id) REFERENCES users(id)
+            FOREIGN KEY (
+                current_holder_id
+            ) REFERENCES users(id)
         )
-    """)
+        """
+    )
 
     # -----------------------------------------------------
-    # MOVEMENTS
+    # MOVEMENT HISTORY
     # -----------------------------------------------------
 
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS item_movements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_id INTEGER NOT NULL,
@@ -150,16 +147,22 @@ def initialize_database():
             action TEXT NOT NULL,
             movement_time TEXT NOT NULL,
             remarks TEXT,
-            FOREIGN KEY (item_id) REFERENCES items(id),
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            FOREIGN KEY (
+                item_id
+            ) REFERENCES items(id),
+            FOREIGN KEY (
+                user_id
+            ) REFERENCES users(id)
         )
-    """)
+        """
+    )
 
     # -----------------------------------------------------
     # NOTIFICATIONS
     # -----------------------------------------------------
 
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS notifications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -168,71 +171,91 @@ def initialize_database():
             notification_type TEXT NOT NULL DEFAULT 'INFO',
             is_read INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            FOREIGN KEY (
+                user_id
+            ) REFERENCES users(id)
         )
-    """)
+        """
+    )
+
+    # -----------------------------------------------------
+    # DATABASE MIGRATION SUPPORT
+    # -----------------------------------------------------
+
+    migrate_users_table(cursor)
 
     connection.commit()
+
     connection.close()
 
 
-# ---------------------------------------------------------
-# AUTHENTICATION
-# ---------------------------------------------------------
+def migrate_users_table(cursor):
+
+    cursor.execute(
+        "PRAGMA table_info(users)"
+    )
+
+    columns = {
+        row["name"]
+        for row in cursor.fetchall()
+    }
+
+    if "section" not in columns:
+
+        cursor.execute(
+            "ALTER TABLE users ADD COLUMN section TEXT"
+        )
+
+    if "role" not in columns:
+
+        cursor.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN role TEXT NOT NULL DEFAULT 'User'
+            """
+        )
+
+    if "password_hash" not in columns:
+
+        cursor.execute(
+            "ALTER TABLE users ADD COLUMN password_hash TEXT"
+        )
+
+    if "oath_acknowledged" not in columns:
+
+        cursor.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN oath_acknowledged
+            INTEGER NOT NULL DEFAULT 0
+            """
+        )
+
+    if "oath_date" not in columns:
+
+        cursor.execute(
+            "ALTER TABLE users ADD COLUMN oath_date TEXT"
+        )
+
+
+# =========================================================
+# USER FUNCTIONS
+# =========================================================
 
 def has_users():
 
     connection = get_connection()
 
-    row = connection.execute("""
+    row = connection.execute(
+        """
         SELECT COUNT(*) AS count
         FROM users
-    """).fetchone()
+        """
+    ).fetchone()
 
     connection.close()
 
     return row["count"] > 0
-
-
-def authenticate_user(staff_number, password):
-
-    connection = get_connection()
-
-    row = connection.execute("""
-        SELECT
-            id,
-            name,
-            email,
-            department,
-            section,
-            staff_number,
-            role,
-            password_hash,
-            oath_acknowledged,
-            oath_date,
-            created_at
-        FROM users
-        WHERE staff_number = ?
-    """, (
-        staff_number.strip(),
-    )).fetchone()
-
-    connection.close()
-
-    if not row:
-        return None
-
-    if not row["password_hash"]:
-        return None
-
-    if verify_password(
-        password,
-        row["password_hash"]
-    ):
-
-        return dict(row)
-
-    return None
 
 
 def create_first_admin(
@@ -241,22 +264,26 @@ def create_first_admin(
     department,
     section,
     staff_number,
-    password
+    password,
 ):
+
+    if has_users():
+
+        return (
+            False,
+            "An administrator already exists."
+        )
 
     connection = get_connection()
 
     try:
 
-        existing = connection.execute("""
-            SELECT COUNT(*) AS count
-            FROM users
-        """).fetchone()
+        password_hash = hash_password(
+            password
+        )
 
-        if existing["count"] > 0:
-            return False, "An administrator already exists."
-
-        connection.execute("""
+        connection.execute(
+            """
             INSERT INTO users (
                 name,
                 email,
@@ -267,38 +294,41 @@ def create_first_admin(
                 password_hash,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, 'Admin', ?, ?)
-        """, (
-            name.strip(),
-            email.strip().lower(),
-            department.strip(),
-            section.strip() if section else None,
-            staff_number.strip(),
-            hash_password(password),
-            datetime.now().isoformat(timespec="seconds")
-        ))
+            VALUES (
+                ?, ?, ?, ?, ?, 'Admin', ?, ?
+            )
+            """,
+            (
+                name,
+                email.lower(),
+                department,
+                section or None,
+                staff_number,
+                password_hash,
+                datetime.now().isoformat(
+                    timespec="seconds"
+                ),
+            ),
+        )
 
         connection.commit()
 
-        return True, "Administrator account created successfully."
+        return (
+            True,
+            "Administrator account created successfully."
+        )
 
-    except sqlite3.IntegrityError as error:
+    except sqlite3.IntegrityError:
 
-        if "email" in str(error).lower():
-            return False, "That email is already registered."
-
-        if "staff_number" in str(error).lower():
-            return False, "That staff number is already registered."
-
-        return False, "Could not create administrator."
+        return (
+            False,
+            "The email or staff number is already registered."
+        )
 
     finally:
+
         connection.close()
 
-
-# ---------------------------------------------------------
-# USERS
-# ---------------------------------------------------------
 
 def add_user(
     name,
@@ -307,14 +337,19 @@ def add_user(
     section,
     staff_number,
     role,
-    password
+    password,
 ):
 
     connection = get_connection()
 
     try:
 
-        connection.execute("""
+        password_hash = hash_password(
+            password
+        )
+
+        connection.execute(
+            """
             INSERT INTO users (
                 name,
                 email,
@@ -325,41 +360,104 @@ def add_user(
                 password_hash,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            name.strip(),
-            email.strip().lower(),
-            department.strip(),
-            section.strip() if section else None,
-            staff_number.strip(),
-            role,
-            hash_password(password),
-            datetime.now().isoformat(timespec="seconds")
-        ))
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            (
+                name.strip(),
+                email.strip().lower(),
+                department.strip(),
+                section.strip() if section else None,
+                staff_number.strip(),
+                role,
+                password_hash,
+                datetime.now().isoformat(
+                    timespec="seconds"
+                ),
+            ),
+        )
 
         connection.commit()
 
-        return True, "User registered successfully."
+        return (
+            True,
+            "User registered successfully."
+        )
 
     except sqlite3.IntegrityError as error:
 
-        if "email" in str(error).lower():
-            return False, "That email is already registered."
+        error_message = str(error).lower()
 
-        if "staff_number" in str(error).lower():
-            return False, "That staff number is already registered."
+        if "email" in error_message:
 
-        return False, "Could not register user."
+            return (
+                False,
+                "That email is already registered."
+            )
+
+        if "staff_number" in error_message:
+
+            return (
+                False,
+                "That staff number is already registered."
+            )
+
+        return (
+            False,
+            "Could not register user."
+        )
 
     finally:
+
         connection.close()
+
+
+def authenticate_user(
+    staff_number,
+    password,
+):
+
+    connection = get_connection()
+
+    row = connection.execute(
+        """
+        SELECT *
+        FROM users
+        WHERE staff_number = ?
+        LIMIT 1
+        """,
+        (staff_number,),
+    ).fetchone()
+
+    connection.close()
+
+    if not row:
+
+        return None
+
+    stored_password = row["password_hash"]
+
+    if not stored_password:
+
+        return None
+
+    if not verify_password(
+        password,
+        stored_password,
+    ):
+
+        return None
+
+    return dict(row)
 
 
 def get_users():
 
     connection = get_connection()
 
-    rows = connection.execute("""
+    rows = connection.execute(
+        """
         SELECT
             id,
             name,
@@ -373,66 +471,91 @@ def get_users():
             created_at
         FROM users
         ORDER BY name
-    """).fetchall()
+        """
+    ).fetchall()
 
     connection.close()
 
-    return [dict(row) for row in rows]
+    return [
+        dict(row)
+        for row in rows
+    ]
 
 
 def acknowledge_oath(user_id):
 
     connection = get_connection()
 
-    connection.execute("""
+    connection.execute(
+        """
         UPDATE users
-        SET oath_acknowledged = 1,
+        SET
+            oath_acknowledged = 1,
             oath_date = ?
         WHERE id = ?
-    """, (
-        datetime.now().isoformat(timespec="seconds"),
-        user_id
-    ))
+        """,
+        (
+            datetime.now().isoformat(
+                timespec="seconds"
+            ),
+            user_id,
+        ),
+    )
 
     connection.commit()
+
     connection.close()
 
 
-# ---------------------------------------------------------
-# ITEMS / BOOKS
-# ---------------------------------------------------------
+# =========================================================
+# ITEM / BOOK FUNCTIONS
+# =========================================================
 
 def generate_item_id():
 
     connection = get_connection()
 
-    row = connection.execute("""
+    row = connection.execute(
+        """
         SELECT id
         FROM items
         ORDER BY id DESC
         LIMIT 1
-    """).fetchone()
+        """
+    ).fetchone()
 
     connection.close()
 
     if row is None:
+
         number = 1
+
     else:
+
         number = row["id"] + 1
 
     return f"LIB-{number:06d}"
 
 
-def add_item(title, department, section):
+def add_item(
+    title,
+    department,
+    section,
+):
 
     item_id = generate_item_id()
-    barcode = item_id.replace("-", "")
+
+    barcode = item_id.replace(
+        "-",
+        ""
+    ).upper()
 
     connection = get_connection()
 
     try:
 
-        connection.execute("""
+        connection.execute(
+            """
             INSERT INTO items (
                 item_id,
                 title,
@@ -442,26 +565,40 @@ def add_item(title, department, section):
                 status,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, 'AVAILABLE', ?)
-        """, (
-            item_id,
-            title.strip(),
-            department.strip(),
-            section.strip() if section else None,
-            barcode,
-            datetime.now().isoformat(timespec="seconds")
-        ))
+            VALUES (
+                ?, ?, ?, ?, ?, 'AVAILABLE', ?
+            )
+            """,
+            (
+                item_id,
+                title.strip(),
+                department.strip(),
+                section.strip()
+                if section
+                else None,
+                barcode,
+                datetime.now().isoformat(
+                    timespec="seconds"
+                ),
+            ),
+        )
 
         connection.commit()
 
-        return True, {
-            "item_id": item_id,
-            "barcode": barcode
-        }
+        return (
+            True,
+            {
+                "item_id": item_id,
+                "barcode": barcode,
+            },
+        )
 
     except sqlite3.IntegrityError:
 
-        return False, "Could not register item."
+        return (
+            False,
+            "Could not register the book/item."
+        )
 
     finally:
 
@@ -472,7 +609,8 @@ def get_items():
 
     connection = get_connection()
 
-    rows = connection.execute("""
+    rows = connection.execute(
+        """
         SELECT
             items.id,
             items.item_id,
@@ -489,11 +627,15 @@ def get_items():
         LEFT JOIN users
             ON items.current_holder_id = users.id
         ORDER BY items.id DESC
-    """).fetchall()
+        """
+    ).fetchall()
 
     connection.close()
 
-    return [dict(row) for row in rows]
+    return [
+        dict(row)
+        for row in rows
+    ]
 
 
 def find_item(search_value):
@@ -502,7 +644,8 @@ def find_item(search_value):
 
     search_value = search_value.strip()
 
-    row = connection.execute("""
+    row = connection.execute(
+        """
         SELECT
             items.id,
             items.item_id,
@@ -522,56 +665,110 @@ def find_item(search_value):
             OR items.barcode = ?
             OR items.title LIKE ?
         LIMIT 1
-    """, (
-        search_value,
-        search_value,
-        f"%{search_value}%"
-    )).fetchone()
+        """,
+        (
+            search_value,
+            search_value,
+            f"%{search_value}%",
+        ),
+    ).fetchone()
 
     connection.close()
 
-    return dict(row) if row else None
+    if row:
+
+        return dict(row)
+
+    return None
 
 
-# ---------------------------------------------------------
-# ISSUE / RETURN
-# ---------------------------------------------------------
+# =========================================================
+# ISSUE BOOK
+# =========================================================
 
-def issue_item(item_id, user_id, remarks=""):
+def issue_item(
+    item_id,
+    user_id,
+    remarks="",
+):
 
     connection = get_connection()
 
-    item = connection.execute("""
+    item = connection.execute(
+        """
         SELECT *
         FROM items
         WHERE id = ?
-    """, (item_id,)).fetchone()
+        """,
+        (item_id,),
+    ).fetchone()
 
     if not item:
 
         connection.close()
 
-        return False, "Item not found."
+        return (
+            False,
+            "Book/item not found."
+        )
 
     if item["status"] == "BORROWED":
 
         connection.close()
 
-        return False, "This item is already borrowed."
+        return (
+            False,
+            "This book is already borrowed."
+        )
 
-    now = datetime.now().isoformat(timespec="seconds")
+    user = connection.execute(
+        """
+        SELECT *
+        FROM users
+        WHERE id = ?
+        """,
+        (user_id,),
+    ).fetchone()
 
-    connection.execute("""
+    if not user:
+
+        connection.close()
+
+        return (
+            False,
+            "User not found."
+        )
+
+    if not user["oath_acknowledged"]:
+
+        connection.close()
+
+        return (
+            False,
+            "The user must acknowledge the Oath "
+            "before borrowing a book."
+        )
+
+    now = datetime.now().isoformat(
+        timespec="seconds"
+    )
+
+    connection.execute(
+        """
         UPDATE items
-        SET status = 'BORROWED',
+        SET
+            status = 'BORROWED',
             current_holder_id = ?
         WHERE id = ?
-    """, (
-        user_id,
-        item_id
-    ))
+        """,
+        (
+            user_id,
+            item_id,
+        ),
+    )
 
-    connection.execute("""
+    connection.execute(
+        """
         INSERT INTO item_movements (
             item_id,
             user_id,
@@ -579,60 +776,98 @@ def issue_item(item_id, user_id, remarks=""):
             movement_time,
             remarks
         )
-        VALUES (?, ?, 'ISSUED', ?, ?)
-    """, (
-        item_id,
-        user_id,
-        now,
-        remarks
-    ))
+        VALUES (
+            ?, ?, 'ISSUED', ?, ?
+        )
+        """,
+        (
+            item_id,
+            user_id,
+            now,
+            remarks,
+        ),
+    )
 
     connection.commit()
+
     connection.close()
 
-    return True, "Item issued successfully."
+    return (
+        True,
+        "Book issued successfully."
+    )
 
 
-def return_item(item_id, user_id, remarks=""):
+# =========================================================
+# RETURN BOOK
+# =========================================================
+
+def return_item(
+    item_id,
+    user_id,
+    remarks="",
+):
 
     connection = get_connection()
 
-    item = connection.execute("""
+    item = connection.execute(
+        """
         SELECT *
         FROM items
         WHERE id = ?
-    """, (item_id,)).fetchone()
+        """,
+        (item_id,),
+    ).fetchone()
 
     if not item:
 
         connection.close()
 
-        return False, "Item not found."
+        return (
+            False,
+            "Book/item not found."
+        )
 
     if item["status"] == "AVAILABLE":
 
         connection.close()
 
-        return False, "This item is already available."
+        return (
+            False,
+            "This book is already available."
+        )
 
-    current_holder = item["current_holder_id"]
+    current_holder = item[
+        "current_holder_id"
+    ]
 
     if current_holder != user_id:
 
         connection.close()
 
-        return False, "Only the current borrower can return this item."
+        return (
+            False,
+            "Only the current borrower can "
+            "return this book."
+        )
 
-    now = datetime.now().isoformat(timespec="seconds")
+    now = datetime.now().isoformat(
+        timespec="seconds"
+    )
 
-    connection.execute("""
+    connection.execute(
+        """
         UPDATE items
-        SET status = 'AVAILABLE',
+        SET
+            status = 'AVAILABLE',
             current_holder_id = NULL
         WHERE id = ?
-    """, (item_id,))
+        """,
+        (item_id,),
+    )
 
-    connection.execute("""
+    connection.execute(
+        """
         INSERT INTO item_movements (
             item_id,
             user_id,
@@ -640,29 +875,38 @@ def return_item(item_id, user_id, remarks=""):
             movement_time,
             remarks
         )
-        VALUES (?, ?, 'RETURNED', ?, ?)
-    """, (
-        item_id,
-        user_id,
-        now,
-        remarks
-    ))
+        VALUES (
+            ?, ?, 'RETURNED', ?, ?
+        )
+        """,
+        (
+            item_id,
+            user_id,
+            now,
+            remarks,
+        ),
+    )
 
     connection.commit()
+
     connection.close()
 
-    return True, "Item returned successfully."
+    return (
+        True,
+        "Book returned successfully."
+    )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # MOVEMENT HISTORY
-# ---------------------------------------------------------
+# =========================================================
 
 def get_movements():
 
     connection = get_connection()
 
-    rows = connection.execute("""
+    rows = connection.execute(
+        """
         SELECT
             item_movements.id,
             items.item_id,
@@ -682,27 +926,32 @@ def get_movements():
         JOIN users
             ON item_movements.user_id = users.id
         ORDER BY item_movements.movement_time DESC
-    """).fetchall()
+        """
+    ).fetchall()
 
     connection.close()
 
-    return [dict(row) for row in rows]
+    return [
+        dict(row)
+        for row in rows
+    ]
 
 
-# ---------------------------------------------------------
+# =========================================================
 # NOTIFICATIONS
-# ---------------------------------------------------------
+# =========================================================
 
 def create_notification(
     title,
     message,
     notification_type="INFO",
-    user_id=None
+    user_id=None,
 ):
 
     connection = get_connection()
 
-    connection.execute("""
+    connection.execute(
+        """
         INSERT INTO notifications (
             user_id,
             title,
@@ -710,41 +959,59 @@ def create_notification(
             notification_type,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        title,
-        message,
-        notification_type,
-        datetime.now().isoformat(timespec="seconds")
-    ))
+        VALUES (
+            ?, ?, ?, ?, ?
+        )
+        """,
+        (
+            user_id,
+            title,
+            message,
+            notification_type,
+            datetime.now().isoformat(
+                timespec="seconds"
+            ),
+        ),
+    )
 
     connection.commit()
+
     connection.close()
 
 
-def get_notifications(user_id=None):
+def get_notifications(
+    user_id=None,
+):
 
     connection = get_connection()
 
     if user_id is None:
 
-        rows = connection.execute("""
+        rows = connection.execute(
+            """
             SELECT *
             FROM notifications
             ORDER BY created_at DESC
-        """).fetchall()
+            """
+        ).fetchall()
 
     else:
 
-        rows = connection.execute("""
+        rows = connection.execute(
+            """
             SELECT *
             FROM notifications
-            WHERE user_id IS NULL
-               OR user_id = ?
+            WHERE
+                user_id IS NULL
+                OR user_id = ?
             ORDER BY created_at DESC
-        """, (user_id,)).fetchall()
+            """,
+            (user_id,),
+        ).fetchall()
 
     connection.close()
 
-    return [dict(row) for row in rows]
+    return [
+        dict(row)
+        for row in rows
+    ]

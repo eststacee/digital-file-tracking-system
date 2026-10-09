@@ -1,261 +1,171 @@
-import sqlite3
+
 import hashlib
-import secrets
-from datetime import datetime
+import hmac
+import os
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 
-# =========================================================
-# DATABASE LOCATION
-# =========================================================
-
-BASE_DIR = Path(__file__).resolve().parent
-
-DATA_DIR = BASE_DIR / "data"
-
-DB_PATH = DATA_DIR / "library_tracking.db"
-
-DATA_DIR.mkdir(exist_ok=True)
+DB_PATH = Path("data") / "filing_system.db"
 
 
-# =========================================================
-# CONNECTION
-# =========================================================
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
 
 def get_connection():
-    connection = sqlite3.connect(DB_PATH)
-
-    connection.row_factory = sqlite3.Row
-
-    connection.execute(
-        "PRAGMA foreign_keys = ON"
-    )
-
-    return connection
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
-# =========================================================
-# PASSWORD SECURITY
-# =========================================================
+def _column_names(conn, table_name):
+    rows = conn.execute(
+        f"PRAGMA table_info({table_name})"
+    ).fetchall()
+    return {row[1] for row in rows}
 
-def hash_password(password, salt=None):
 
-    if salt is None:
-        salt = secrets.token_hex(16)
+def _add_column_if_missing(conn, table, column, definition):
+    if column not in _column_names(conn, table):
+        conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        )
+
+
+def initialize_database():
+    conn = get_connection()
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                department TEXT NOT NULL,
+                section TEXT,
+                staff_number TEXT NOT NULL UNIQUE,
+                password_salt TEXT,
+                password_hash TEXT,
+                role TEXT NOT NULL DEFAULT 'User',
+                oath_acknowledged_at TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id TEXT UNIQUE,
+                file_name TEXT NOT NULL,
+                department TEXT NOT NULL,
+                section TEXT,
+                barcode TEXT UNIQUE,
+                status TEXT NOT NULL DEFAULT 'AVAILABLE',
+                current_holder_id INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (current_holder_id)
+                    REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS file_movements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                movement_time TEXT NOT NULL,
+                remarks TEXT,
+                FOREIGN KEY (file_id) REFERENCES files(id),
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                notification_type TEXT NOT NULL DEFAULT 'INFO',
+                is_read INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+            """
+        )
+
+        # Add newer columns to an older prototype database.
+        _add_column_if_missing(conn, "users", "section", "TEXT")
+        _add_column_if_missing(conn, "users", "password_salt", "TEXT")
+        _add_column_if_missing(conn, "users", "password_hash", "TEXT")
+        _add_column_if_missing(
+            conn, "users", "role", "TEXT NOT NULL DEFAULT 'User'"
+        )
+        _add_column_if_missing(
+            conn, "users", "oath_acknowledged_at", "TEXT"
+        )
+        _add_column_if_missing(
+            conn, "users", "active", "INTEGER NOT NULL DEFAULT 1"
+        )
+
+        _add_column_if_missing(conn, "files", "file_id", "TEXT")
+        _add_column_if_missing(conn, "files", "section", "TEXT")
+        _add_column_if_missing(conn, "files", "barcode", "TEXT")
+
+        # Give older file records generated IDs and barcodes.
+        legacy_rows = conn.execute(
+            "SELECT id, file_id, barcode FROM files ORDER BY id"
+        ).fetchall()
+
+        for row in legacy_rows:
+            current = conn.execute(
+                "SELECT file_id, barcode FROM files WHERE id = ?",
+                (row["id"],),
+            ).fetchone()
+
+            generated_id = (
+                current["file_id"]
+                if current["file_id"]
+                else f"DFS-{int(row['id']):06d}"
+            )
+
+            conn.execute(
+                "UPDATE files SET file_id = ?, barcode = ? WHERE id = ?",
+                (generated_id, generated_id, row["id"]),
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _hash_password(password, salt_hex=None):
+    salt = bytes.fromhex(salt_hex) if salt_hex else os.urandom(16)
 
     password_hash = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
-        salt.encode("utf-8"),
-        100_000,
-    ).hex()
-
-    return f"{salt}${password_hash}"
-
-
-def verify_password(password, stored_password):
-
-    try:
-
-        salt, stored_hash = stored_password.split(
-            "$",
-            1
-        )
-
-        password_hash = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            salt.encode("utf-8"),
-            100_000,
-        ).hex()
-
-        return secrets.compare_digest(
-            password_hash,
-            stored_hash,
-        )
-
-    except (ValueError, AttributeError):
-
-        return False
-
-
-# =========================================================
-# DATABASE INITIALIZATION
-# =========================================================
-
-def initialize_database():
-
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    # -----------------------------------------------------
-    # USERS
-    # -----------------------------------------------------
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE,
-            department TEXT NOT NULL,
-            section TEXT,
-            staff_number TEXT NOT NULL UNIQUE,
-            role TEXT NOT NULL DEFAULT 'User',
-            password_hash TEXT,
-            oath_acknowledged INTEGER NOT NULL DEFAULT 0,
-            oath_date TEXT,
-            created_at TEXT NOT NULL
-        )
-        """
+        salt,
+        200_000,
     )
 
-    # -----------------------------------------------------
-    # ITEMS
-    # -----------------------------------------------------
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id TEXT NOT NULL UNIQUE,
-            title TEXT NOT NULL,
-            department TEXT NOT NULL,
-            section TEXT,
-            barcode TEXT NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'AVAILABLE',
-            current_holder_id INTEGER,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (
-                current_holder_id
-            ) REFERENCES users(id)
-        )
-        """
-    )
-
-    # -----------------------------------------------------
-    # MOVEMENT HISTORY
-    # -----------------------------------------------------
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS item_movements (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            movement_time TEXT NOT NULL,
-            remarks TEXT,
-            FOREIGN KEY (
-                item_id
-            ) REFERENCES items(id),
-            FOREIGN KEY (
-                user_id
-            ) REFERENCES users(id)
-        )
-        """
-    )
-
-    # -----------------------------------------------------
-    # NOTIFICATIONS
-    # -----------------------------------------------------
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            title TEXT NOT NULL,
-            message TEXT NOT NULL,
-            notification_type TEXT NOT NULL DEFAULT 'INFO',
-            is_read INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (
-                user_id
-            ) REFERENCES users(id)
-        )
-        """
-    )
-
-    # -----------------------------------------------------
-    # DATABASE MIGRATION SUPPORT
-    # -----------------------------------------------------
-
-    migrate_users_table(cursor)
-
-    connection.commit()
-
-    connection.close()
+    return salt.hex(), password_hash.hex()
 
 
-def migrate_users_table(cursor):
+def _verify_password(password, salt_hex, stored_hash):
+    _, candidate = _hash_password(password, salt_hex)
+    return hmac.compare_digest(candidate, stored_hash)
 
-    cursor.execute(
-        "PRAGMA table_info(users)"
-    )
-
-    columns = {
-        row["name"]
-        for row in cursor.fetchall()
-    }
-
-    if "section" not in columns:
-
-        cursor.execute(
-            "ALTER TABLE users ADD COLUMN section TEXT"
-        )
-
-    if "role" not in columns:
-
-        cursor.execute(
-            """
-            ALTER TABLE users
-            ADD COLUMN role TEXT NOT NULL DEFAULT 'User'
-            """
-        )
-
-    if "password_hash" not in columns:
-
-        cursor.execute(
-            "ALTER TABLE users ADD COLUMN password_hash TEXT"
-        )
-
-    if "oath_acknowledged" not in columns:
-
-        cursor.execute(
-            """
-            ALTER TABLE users
-            ADD COLUMN oath_acknowledged
-            INTEGER NOT NULL DEFAULT 0
-            """
-        )
-
-    if "oath_date" not in columns:
-
-        cursor.execute(
-            "ALTER TABLE users ADD COLUMN oath_date TEXT"
-        )
-
-
-# =========================================================
-# USER FUNCTIONS
-# =========================================================
 
 def has_users():
-
-    connection = get_connection()
-
-    row = connection.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM users
-        """
-    ).fetchone()
-
-    connection.close()
-
-    return row["count"] > 0
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM users LIMIT 1"
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
 
 
 def create_first_admin(
@@ -266,68 +176,20 @@ def create_first_admin(
     staff_number,
     password,
 ):
-
     if has_users():
-
-        return (
-            False,
-            "An administrator already exists."
+        raise ValueError(
+            "An initial administrator already exists."
         )
 
-    connection = get_connection()
-
-    try:
-
-        password_hash = hash_password(
-            password
-        )
-
-        connection.execute(
-            """
-            INSERT INTO users (
-                name,
-                email,
-                department,
-                section,
-                staff_number,
-                role,
-                password_hash,
-                created_at
-            )
-            VALUES (
-                ?, ?, ?, ?, ?, 'Admin', ?, ?
-            )
-            """,
-            (
-                name,
-                email.lower(),
-                department,
-                section or None,
-                staff_number,
-                password_hash,
-                datetime.now().isoformat(
-                    timespec="seconds"
-                ),
-            ),
-        )
-
-        connection.commit()
-
-        return (
-            True,
-            "Administrator account created successfully."
-        )
-
-    except sqlite3.IntegrityError:
-
-        return (
-            False,
-            "The email or staff number is already registered."
-        )
-
-    finally:
-
-        connection.close()
+    return add_user(
+        name=name,
+        email=email,
+        department=department,
+        section=section,
+        staff_number=staff_number,
+        role="Admin",
+        password=password,
+    )
 
 
 def add_user(
@@ -336,682 +198,437 @@ def add_user(
     department,
     section,
     staff_number,
-    role,
-    password,
+    role="User",
+    password="",
 ):
+    role = role.strip().title()
 
-    connection = get_connection()
-
-    try:
-
-        password_hash = hash_password(
-            password
+    if role not in {"Admin", "User", "View Only"}:
+        raise ValueError(
+            "Role must be Admin, User, or View Only."
         )
 
-        connection.execute(
+    if not password:
+        raise ValueError("Password is required.")
+
+    salt, password_hash = _hash_password(password)
+    now = _utc_now()
+
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
             """
             INSERT INTO users (
-                name,
-                email,
-                department,
-                section,
-                staff_number,
-                role,
-                password_hash,
-                created_at
+                name, email, department, section, staff_number,
+                password_salt, password_hash, role, created_at
             )
-            VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?
-            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name.strip(),
                 email.strip().lower(),
                 department.strip(),
-                section.strip() if section else None,
-                staff_number.strip(),
-                role,
+                (section or "").strip() or None,
+                staff_number.strip().upper(),
+                salt,
                 password_hash,
-                datetime.now().isoformat(
-                    timespec="seconds"
-                ),
+                role,
+                now,
             ),
         )
 
-        connection.commit()
-
-        return (
-            True,
-            "User registered successfully."
-        )
-
-    except sqlite3.IntegrityError as error:
-
-        error_message = str(error).lower()
-
-        if "email" in error_message:
-
-            return (
-                False,
-                "That email is already registered."
-            )
-
-        if "staff_number" in error_message:
-
-            return (
-                False,
-                "That staff number is already registered."
-            )
-
-        return (
-            False,
-            "Could not register user."
-        )
-
+        user_id = cursor.lastrowid
+        conn.commit()
+        return user_id
     finally:
+        conn.close()
 
-        connection.close()
+
+def get_users(active_only=False):
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM users"
+
+        if active_only:
+            query += " WHERE active = 1"
+
+        query += " ORDER BY name COLLATE NOCASE"
+
+        return [
+            dict(row)
+            for row in conn.execute(query).fetchall()
+        ]
+    finally:
+        conn.close()
 
 
-def authenticate_user(
-    staff_number,
-    password,
-):
+def authenticate_user(staff_number, password):
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM users
+            WHERE staff_number = ? AND active = 1
+            """,
+            (staff_number.strip().upper(),),
+        ).fetchone()
 
-    connection = get_connection()
+        if (
+            not row
+            or not row["password_hash"]
+            or not row["password_salt"]
+        ):
+            return None
 
-    row = connection.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE staff_number = ?
-        LIMIT 1
-        """,
-        (staff_number,),
+        if not _verify_password(
+            password,
+            row["password_salt"],
+            row["password_hash"],
+        ):
+            return None
+
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def _next_file_id(conn):
+    row = conn.execute(
+        "SELECT MAX(id) AS max_id FROM files"
     ).fetchone()
 
-    connection.close()
-
-    if not row:
-
-        return None
-
-    stored_password = row["password_hash"]
-
-    if not stored_password:
-
-        return None
-
-    if not verify_password(
-        password,
-        stored_password,
-    ):
-
-        return None
-
-    return dict(row)
+    next_number = int(row["max_id"] or 0) + 1
+    return f"DFS-{next_number:06d}"
 
 
-def get_users():
+def add_item(file_name, department, section=None):
+    conn = get_connection()
+    try:
+        file_id = _next_file_id(conn)
+        now = _utc_now()
 
-    connection = get_connection()
-
-    rows = connection.execute(
-        """
-        SELECT
-            id,
-            name,
-            email,
-            department,
-            section,
-            staff_number,
-            role,
-            oath_acknowledged,
-            oath_date,
-            created_at
-        FROM users
-        ORDER BY name
-        """
-    ).fetchall()
-
-    connection.close()
-
-    return [
-        dict(row)
-        for row in rows
-    ]
-
-
-def acknowledge_oath(user_id):
-
-    connection = get_connection()
-
-    connection.execute(
-        """
-        UPDATE users
-        SET
-            oath_acknowledged = 1,
-            oath_date = ?
-        WHERE id = ?
-        """,
-        (
-            datetime.now().isoformat(
-                timespec="seconds"
+        conn.execute(
+            """
+            INSERT INTO files (
+                file_id, file_name, department, section, barcode,
+                status, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'AVAILABLE', ?)
+            """,
+            (
+                file_id,
+                file_name.strip(),
+                department.strip(),
+                (section or "").strip() or None,
+                file_id,
+                now,
             ),
-            user_id,
-        ),
+        )
+
+        conn.commit()
+        return file_id
+    finally:
+        conn.close()
+
+
+def get_items(status=None):
+    conn = get_connection()
+    try:
+        query = """
+            SELECT
+                f.*,
+                u.name AS current_holder_name,
+                u.staff_number AS current_holder_staff_number
+            FROM files f
+            LEFT JOIN users u ON f.current_holder_id = u.id
+        """
+
+        params = []
+
+        if status:
+            query += " WHERE f.status = ?"
+            params.append(status)
+
+        query += " ORDER BY f.id DESC"
+
+        return [
+            dict(row)
+            for row in conn.execute(query, params).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def get_files(status=None):
+    return get_items(status=status)
+
+
+def find_item(identifier):
+    value = (identifier or "").strip().upper()
+
+    if not value:
+        return None
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                f.*,
+                u.name AS current_holder_name,
+                u.staff_number AS current_holder_staff_number
+            FROM files f
+            LEFT JOIN users u ON f.current_holder_id = u.id
+            WHERE UPPER(f.barcode) = ?
+               OR UPPER(f.file_id) = ?
+            LIMIT 1
+            """,
+            (value, value),
+        ).fetchone()
+
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _notify(
+    conn,
+    user_id,
+    title,
+    message,
+    kind="INFO",
+):
+    conn.execute(
+        """
+        INSERT INTO notifications (
+            user_id, title, message, notification_type, created_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (user_id, title, message, kind, _utc_now()),
     )
 
-    connection.commit()
 
-    connection.close()
-
-
-# =========================================================
-# ITEM / BOOK FUNCTIONS
-# =========================================================
-
-def generate_item_id():
-
-    connection = get_connection()
-
-    row = connection.execute(
-        """
-        SELECT id
-        FROM items
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    ).fetchone()
-
-    connection.close()
-
-    if row is None:
-
-        number = 1
-
-    else:
-
-        number = row["id"] + 1
-
-    return f"LIB-{number:06d}"
-
-
-def add_item(
-    title,
-    department,
-    section,
-):
-
-    item_id = generate_item_id()
-
-    barcode = item_id.replace(
-        "-",
-        ""
-    ).upper()
-
-    connection = get_connection()
-
+def issue_item(item_id, user_id, remarks=""):
+    conn = get_connection()
     try:
-
-        connection.execute(
+        row = conn.execute(
             """
-            INSERT INTO items (
-                item_id,
-                title,
-                department,
-                section,
-                barcode,
-                status,
-                created_at
+            SELECT id, file_id, file_name, status, current_holder_id
+            FROM files WHERE id = ?
+            """,
+            (item_id,),
+        ).fetchone()
+
+        if not row:
+            raise ValueError("File not found.")
+
+        if (
+            row["status"] != "AVAILABLE"
+            or row["current_holder_id"] is not None
+        ):
+            raise ValueError("This file is already out.")
+
+        conn.execute(
+            """
+            UPDATE files
+            SET status = 'OUT', current_holder_id = ?
+            WHERE id = ?
+            """,
+            (user_id, item_id),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO file_movements (
+                file_id, user_id, action, movement_time, remarks
             )
-            VALUES (
-                ?, ?, ?, ?, ?, 'AVAILABLE', ?
-            )
+            VALUES (?, ?, 'ISSUED', ?, ?)
             """,
             (
                 item_id,
-                title.strip(),
-                department.strip(),
-                section.strip()
-                if section
-                else None,
-                barcode,
-                datetime.now().isoformat(
-                    timespec="seconds"
-                ),
+                user_id,
+                _utc_now(),
+                remarks.strip() or None,
             ),
         )
 
-        connection.commit()
-
-        return (
-            True,
-            {
-                "item_id": item_id,
-                "barcode": barcode,
-            },
+        _notify(
+            conn,
+            user_id,
+            "File issued successfully",
+            f"{row['file_id']} - {row['file_name']} "
+            "has been issued to you.",
+            "ISSUE",
         )
 
-    except sqlite3.IntegrityError:
-
-        return (
-            False,
-            "Could not register the book/item."
-        )
-
+        conn.commit()
     finally:
-
-        connection.close()
-
-
-def get_items():
-
-    connection = get_connection()
-
-    rows = connection.execute(
-        """
-        SELECT
-            items.id,
-            items.item_id,
-            items.title,
-            items.department,
-            items.section,
-            items.barcode,
-            items.status,
-            items.current_holder_id,
-            users.name AS current_holder,
-            users.email AS holder_email,
-            items.created_at
-        FROM items
-        LEFT JOIN users
-            ON items.current_holder_id = users.id
-        ORDER BY items.id DESC
-        """
-    ).fetchall()
-
-    connection.close()
-
-    return [
-        dict(row)
-        for row in rows
-    ]
+        conn.close()
 
 
-def find_item(search_value):
+def return_item(item_id, user_id, remarks=""):
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, file_id, file_name, status, current_holder_id
+            FROM files WHERE id = ?
+            """,
+            (item_id,),
+        ).fetchone()
 
-    connection = get_connection()
+        if not row:
+            raise ValueError("File not found.")
 
-    search_value = search_value.strip()
+        if (
+            row["status"] != "OUT"
+            or row["current_holder_id"] is None
+        ):
+            raise ValueError("This file is already available.")
 
-    row = connection.execute(
-        """
-        SELECT
-            items.id,
-            items.item_id,
-            items.title,
-            items.department,
-            items.section,
-            items.barcode,
-            items.status,
-            items.current_holder_id,
-            users.name AS current_holder,
-            users.email AS holder_email
-        FROM items
-        LEFT JOIN users
-            ON items.current_holder_id = users.id
-        WHERE
-            items.item_id = ?
-            OR items.barcode = ?
-            OR items.title LIKE ?
-        LIMIT 1
-        """,
-        (
-            search_value,
-            search_value,
-            f"%{search_value}%",
-        ),
-    ).fetchone()
+        if int(row["current_holder_id"]) != int(user_id):
+            raise PermissionError(
+                "Only the current holder can return this file."
+            )
 
-    connection.close()
-
-    if row:
-
-        return dict(row)
-
-    return None
-
-
-# =========================================================
-# ISSUE BOOK
-# =========================================================
-
-def issue_item(
-    item_id,
-    user_id,
-    remarks="",
-):
-
-    connection = get_connection()
-
-    item = connection.execute(
-        """
-        SELECT *
-        FROM items
-        WHERE id = ?
-        """,
-        (item_id,),
-    ).fetchone()
-
-    if not item:
-
-        connection.close()
-
-        return (
-            False,
-            "Book/item not found."
+        conn.execute(
+            """
+            UPDATE files
+            SET status = 'AVAILABLE', current_holder_id = NULL
+            WHERE id = ?
+            """,
+            (item_id,),
         )
 
-    if item["status"] == "BORROWED":
-
-        connection.close()
-
-        return (
-            False,
-            "This book is already borrowed."
-        )
-
-    user = connection.execute(
-        """
-        SELECT *
-        FROM users
-        WHERE id = ?
-        """,
-        (user_id,),
-    ).fetchone()
-
-    if not user:
-
-        connection.close()
-
-        return (
-            False,
-            "User not found."
-        )
-
-    if not user["oath_acknowledged"]:
-
-        connection.close()
-
-        return (
-            False,
-            "The user must acknowledge the Oath "
-            "before borrowing a book."
-        )
-
-    now = datetime.now().isoformat(
-        timespec="seconds"
-    )
-
-    connection.execute(
-        """
-        UPDATE items
-        SET
-            status = 'BORROWED',
-            current_holder_id = ?
-        WHERE id = ?
-        """,
-        (
-            user_id,
-            item_id,
-        ),
-    )
-
-    connection.execute(
-        """
-        INSERT INTO item_movements (
-            item_id,
-            user_id,
-            action,
-            movement_time,
-            remarks
-        )
-        VALUES (
-            ?, ?, 'ISSUED', ?, ?
-        )
-        """,
-        (
-            item_id,
-            user_id,
-            now,
-            remarks,
-        ),
-    )
-
-    connection.commit()
-
-    connection.close()
-
-    return (
-        True,
-        "Book issued successfully."
-    )
-
-
-# =========================================================
-# RETURN BOOK
-# =========================================================
-
-def return_item(
-    item_id,
-    user_id,
-    remarks="",
-):
-
-    connection = get_connection()
-
-    item = connection.execute(
-        """
-        SELECT *
-        FROM items
-        WHERE id = ?
-        """,
-        (item_id,),
-    ).fetchone()
-
-    if not item:
-
-        connection.close()
-
-        return (
-            False,
-            "Book/item not found."
-        )
-
-    if item["status"] == "AVAILABLE":
-
-        connection.close()
-
-        return (
-            False,
-            "This book is already available."
-        )
-
-    current_holder = item[
-        "current_holder_id"
-    ]
-
-    if current_holder != user_id:
-
-        connection.close()
-
-        return (
-            False,
-            "Only the current borrower can "
-            "return this book."
-        )
-
-    now = datetime.now().isoformat(
-        timespec="seconds"
-    )
-
-    connection.execute(
-        """
-        UPDATE items
-        SET
-            status = 'AVAILABLE',
-            current_holder_id = NULL
-        WHERE id = ?
-        """,
-        (item_id,),
-    )
-
-    connection.execute(
-        """
-        INSERT INTO item_movements (
-            item_id,
-            user_id,
-            action,
-            movement_time,
-            remarks
-        )
-        VALUES (
-            ?, ?, 'RETURNED', ?, ?
-        )
-        """,
-        (
-            item_id,
-            user_id,
-            now,
-            remarks,
-        ),
-    )
-
-    connection.commit()
-
-    connection.close()
-
-    return (
-        True,
-        "Book returned successfully."
-    )
-
-
-# =========================================================
-# MOVEMENT HISTORY
-# =========================================================
-
-def get_movements():
-
-    connection = get_connection()
-
-    rows = connection.execute(
-        """
-        SELECT
-            item_movements.id,
-            items.item_id,
-            items.title,
-            items.barcode,
-            users.name,
-            users.email,
-            users.department,
-            users.section,
-            users.staff_number,
-            item_movements.action,
-            item_movements.movement_time,
-            item_movements.remarks
-        FROM item_movements
-        JOIN items
-            ON item_movements.item_id = items.id
-        JOIN users
-            ON item_movements.user_id = users.id
-        ORDER BY item_movements.movement_time DESC
-        """
-    ).fetchall()
-
-    connection.close()
-
-    return [
-        dict(row)
-        for row in rows
-    ]
-
-
-# =========================================================
-# NOTIFICATIONS
-# =========================================================
-
-def create_notification(
-    title,
-    message,
-    notification_type="INFO",
-    user_id=None,
-):
-
-    connection = get_connection()
-
-    connection.execute(
-        """
-        INSERT INTO notifications (
-            user_id,
-            title,
-            message,
-            notification_type,
-            created_at
-        )
-        VALUES (
-            ?, ?, ?, ?, ?
-        )
-        """,
-        (
-            user_id,
-            title,
-            message,
-            notification_type,
-            datetime.now().isoformat(
-                timespec="seconds"
+        conn.execute(
+            """
+            INSERT INTO file_movements (
+                file_id, user_id, action, movement_time, remarks
+            )
+            VALUES (?, ?, 'RETURNED', ?, ?)
+            """,
+            (
+                item_id,
+                user_id,
+                _utc_now(),
+                remarks.strip() or None,
             ),
-        ),
-    )
+        )
 
-    connection.commit()
+        _notify(
+            conn,
+            user_id,
+            "File returned successfully",
+            f"{row['file_id']} - {row['file_name']} "
+            "has been returned and is now available.",
+            "RETURN",
+        )
 
-    connection.close()
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def get_notifications(
-    user_id=None,
-):
+def get_movements(file_id=None):
+    conn = get_connection()
+    try:
+        query = """
+            SELECT
+                m.id,
+                f.file_id AS system_file_id,
+                f.file_name,
+                u.name AS user_name,
+                u.staff_number,
+                m.action,
+                m.movement_time,
+                m.remarks
+            FROM file_movements m
+            JOIN files f ON m.file_id = f.id
+            JOIN users u ON m.user_id = u.id
+        """
 
-    connection = get_connection()
+        params = []
 
-    if user_id is None:
+        if file_id is not None:
+            query += " WHERE m.file_id = ?"
+            params.append(file_id)
 
-        rows = connection.execute(
-            """
-            SELECT *
+        query += " ORDER BY m.id DESC"
+
+        return [
+            dict(row)
+            for row in conn.execute(query, params).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def get_notifications(user_id, include_read=True):
+    conn = get_connection()
+    try:
+        query = """
+            SELECT
+                id, title, message, notification_type,
+                is_read, created_at
             FROM notifications
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
+            WHERE user_id = ? OR user_id IS NULL
+        """
 
-    else:
+        params = [user_id]
 
-        rows = connection.execute(
+        if not include_read:
+            query += " AND is_read = 0"
+
+        query += " ORDER BY id DESC LIMIT 100"
+
+        return [
+            dict(row)
+            for row in conn.execute(query, params).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def mark_notifications_read(user_id):
+    conn = get_connection()
+    try:
+        conn.execute(
             """
-            SELECT *
-            FROM notifications
-            WHERE
-                user_id IS NULL
-                OR user_id = ?
-            ORDER BY created_at DESC
+            UPDATE notifications SET is_read = 1
+            WHERE user_id = ? OR user_id IS NULL
             """,
             (user_id,),
-        ).fetchall()
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
-    connection.close()
 
-    return [
-        dict(row)
-        for row in rows
-    ]
+def acknowledge_oath(user_id):
+    conn = get_connection()
+    try:
+        timestamp = _utc_now()
+
+        conn.execute(
+            """
+            UPDATE users
+            SET oath_acknowledged_at = ?
+            WHERE id = ?
+            """,
+            (timestamp, user_id),
+        )
+
+        _notify(
+            conn,
+            user_id,
+            "Oath acknowledged",
+            "Your Oath & Responsibilities acknowledgement "
+            "has been recorded.",
+            "OATH",
+        )
+
+        conn.commit()
+        return timestamp
+    finally:
+        conn.close()

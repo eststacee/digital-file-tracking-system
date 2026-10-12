@@ -38,7 +38,7 @@ st.set_page_config(
 
 
 # =========================================================
-# BANKING-STYLE THEME
+# BANKING-STYLE UI
 # =========================================================
 
 st.markdown(
@@ -59,12 +59,12 @@ st.markdown(
     }
 
     .stApp {
-        background-color: var(--page-bg);
-        color: var(--text);
+        background-color: #F4F7FA;
+        color: #243447;
     }
 
     [data-testid="stSidebar"] {
-        background-color: var(--navy);
+        background-color: #102A43;
         border-right: 1px solid #29445F;
     }
 
@@ -72,39 +72,34 @@ st.markdown(
         color: #FFFFFF !important;
     }
 
-    [data-testid="stSidebar"] [data-testid="stRadio"] label {
-        padding: 7px 9px;
-        border-radius: 7px;
-    }
-
     [data-testid="stSidebar"] hr {
         border-color: #456078;
     }
 
     .brand-title {
-        font-size: 25px;
+        font-size: 27px;
         font-weight: 800;
-        color: var(--navy);
-        margin-bottom: 2px;
+        color: #102A43;
+        margin-bottom: 3px;
     }
 
     .brand-subtitle {
-        color: var(--muted);
+        color: #64748B;
         font-size: 13px;
         margin-bottom: 22px;
     }
 
     .section-heading {
-        color: var(--navy);
+        color: #102A43;
         font-size: 20px;
         font-weight: 750;
-        margin-top: 12px;
+        margin-top: 15px;
         margin-bottom: 12px;
     }
 
     .metric-card {
-        background: var(--white);
-        border: 1px solid var(--border);
+        background: #FFFFFF;
+        border: 1px solid #DCE4EC;
         border-radius: 12px;
         padding: 19px;
         min-height: 125px;
@@ -112,27 +107,27 @@ st.markdown(
     }
 
     .metric-label {
-        color: var(--muted);
+        color: #64748B;
         font-size: 13px;
         font-weight: 600;
         margin-bottom: 8px;
     }
 
     .metric-value {
-        color: var(--navy);
+        color: #102A43;
         font-size: 30px;
         font-weight: 800;
     }
 
     .metric-note {
-        color: var(--muted);
+        color: #64748B;
         font-size: 12px;
         margin-top: 4px;
     }
 
     .panel {
-        background: var(--white);
-        border: 1px solid var(--border);
+        background: #FFFFFF;
+        border: 1px solid #DCE4EC;
         border-radius: 12px;
         padding: 18px;
         margin-bottom: 12px;
@@ -146,49 +141,47 @@ st.markdown(
     }
 
     div[data-testid="stButton"] button[kind="primary"] {
-        background: var(--navy);
-        border: 1px solid var(--navy);
+        background: #102A43;
+        border: 1px solid #102A43;
         color: #FFFFFF;
     }
 
     div[data-testid="stButton"] button[kind="primary"]:hover {
-        background: var(--navy-light);
-        border-color: var(--navy-light);
+        background: #243F5A;
+        border-color: #243F5A;
     }
 
-    div[data-testid="stTextInput"] input,
-    div[data-testid="stSelectbox"] div[data-baseweb="select"] {
+    div[data-testid="stTextInput"] input {
         border-radius: 8px;
     }
 
     div[data-testid="stDataFrame"] {
-        border: 1px solid var(--border);
+        border: 1px solid #DCE4EC;
         border-radius: 9px;
         overflow: hidden;
     }
 
-    .status-available {
-        color: #18794E;
-        font-weight: 700;
+    #MainMenu {
+        visibility: hidden;
     }
 
-    .status-out {
-        color: #B54708;
-        font-weight: 700;
+    footer {
+        visibility: hidden;
     }
-
-    .small-muted {
-        color: var(--muted);
-        font-size: 12px;
-    }
-
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
 
     @media (max-width: 768px) {
-        .brand-title {font-size: 22px;}
-        .metric-card {padding: 13px; min-height: 105px;}
-        .metric-value {font-size: 24px;}
+        .brand-title {
+            font-size: 22px;
+        }
+
+        .metric-card {
+            padding: 13px;
+            min-height: 105px;
+        }
+
+        .metric-value {
+            font-size: 24px;
+        }
     }
     </style>
     """,
@@ -208,7 +201,7 @@ initialize_database()
 # =========================================================
 
 def get_value(record, *keys, default=""):
-    """Return the first available value from a database row/dict."""
+    """Read the first available field from a dictionary."""
     if not isinstance(record, dict):
         return default
 
@@ -220,24 +213,20 @@ def get_value(record, *keys, default=""):
     return default
 
 
-def user_id(user):
+def get_user_id(user):
     return get_value(user, "id", "user_id", default=None)
 
 
-def user_role(user):
+def get_role(user):
     return str(get_value(user, "role", default="User")).strip().lower()
 
 
 def is_admin(user):
-    return user_role(user) == "admin"
+    return get_role(user) == "admin"
 
 
 def is_view_only(user):
-    return user_role(user) in ("view only", "view_only", "viewer")
-
-
-def can_manage_files(user):
-    return is_admin(user)
+    return get_role(user) in ("view only", "view_only", "viewer")
 
 
 def can_move_files(user):
@@ -258,38 +247,50 @@ def get_file_status(item):
 
 def is_file_out(item):
     status = get_file_status(item).strip().lower()
-    return status in ("issued", "out", "borrowed", "checked out", "checked_out")
+    return status in (
+        "issued",
+        "out",
+        "borrowed",
+        "checked out",
+        "checked_out",
+    )
 
 
-def format_file_table(items):
-    """Prepare file rows for display without exposing internal user records."""
+def get_all_items():
+    return get_items() or []
+
+
+def make_file_dataframe(items):
     rows = []
 
     for item in items:
-        rows.append(
-            {
-                "File ID": get_file_id(item),
-                "File Name": get_file_name(item),
-                "Department": get_value(item, "department"),
-                "Section": get_value(item, "section"),
-                "Status": get_file_status(item),
-                "Current Holder": get_value(
-                    item, "current_holder_name", "current_holder",
-                    default="—"
-                ) or "—",
-                "Barcode": get_value(item, "barcode"),
-            }
-        )
+        rows.append({
+            "File ID": get_file_id(item),
+            "File Name": get_file_name(item),
+            "Department": get_value(item, "department"),
+            "Section": get_value(item, "section") or "—",
+            "Status": get_file_status(item),
+            "Current Holder": get_value(
+                item,
+                "current_holder_name",
+                "current_holder",
+                default="—",
+            ) or "—",
+            "Barcode": get_value(item, "barcode") or "—",
+        })
 
     return pd.DataFrame(rows)
 
 
-def show_page_header(title, description=""):
-    st.markdown(f'<div class="brand-title">{title}</div>', unsafe_allow_html=True)
+def show_header(title, subtitle=""):
+    st.markdown(
+        f'<div class="brand-title">{title}</div>',
+        unsafe_allow_html=True,
+    )
 
-    if description:
+    if subtitle:
         st.markdown(
-            f'<div class="brand-subtitle">{description}</div>',
+            f'<div class="brand-subtitle">{subtitle}</div>',
             unsafe_allow_html=True,
         )
 
@@ -307,45 +308,33 @@ def metric_card(label, value, note, icon):
     )
 
 
-def find_item_from_input(identifier):
-    """Use the existing database lookup for file ID/barcode."""
-    identifier = identifier.strip()
-
-    if not identifier:
-        return None
-
-    return find_item(identifier)
-
-
-def get_all_items():
-    return get_items() or []
-
-
 # =========================================================
 # FIRST ADMINISTRATOR SETUP
 # =========================================================
 
 if not has_users():
-    show_page_header(
+    show_header(
         "📁 Digital Filing System",
         "Initial administrator registration",
     )
 
     st.info(
-        "No users have been registered yet. Create the first administrator "
-        "account to begin using the system."
+        "No accounts exist yet. Create the first administrator account."
     )
 
     with st.form("first_admin_form"):
         st.subheader("Create Administrator")
 
-        admin_name = st.text_input("Full Name")
-        admin_email = st.text_input("Organization Email")
-        admin_department = st.text_input("Department")
-        admin_section = st.text_input("Section (optional)")
-        admin_staff_number = st.text_input("Staff Number")
-        admin_password = st.text_input("Password", type="password")
-        admin_confirm = st.text_input("Confirm Password", type="password")
+        name = st.text_input("Full Name")
+        email = st.text_input("Organization Email")
+        department = st.text_input("Department")
+        section = st.text_input("Section (optional)")
+        staff_number = st.text_input("Staff Number")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input(
+            "Confirm Password",
+            type="password",
+        )
 
         submitted = st.form_submit_button(
             "Create Administrator",
@@ -354,34 +343,38 @@ if not has_users():
         )
 
         if submitted:
-            if not all(
-                [
-                    admin_name.strip(),
-                    admin_email.strip(),
-                    admin_department.strip(),
-                    admin_staff_number.strip(),
-                    admin_password,
-                ]
-            ):
-                st.error("Please complete all required fields.")
-            elif admin_password != admin_confirm:
+            if not all([
+                name.strip(),
+                email.strip(),
+                department.strip(),
+                staff_number.strip(),
+                password,
+            ]):
+                st.error("Complete all required fields.")
+
+            elif password != confirm_password:
                 st.error("The passwords do not match.")
+
             else:
                 try:
                     create_first_admin(
-                        admin_name.strip(),
-                        admin_email.strip(),
-                        admin_department.strip(),
-                        admin_section.strip() or None,
-                        admin_staff_number.strip(),
-                        admin_password,
+                        name.strip(),
+                        email.strip(),
+                        department.strip(),
+                        section.strip() or None,
+                        staff_number.strip(),
+                        password,
                     )
+
                     st.success(
                         "Administrator created. You can now sign in."
                     )
                     st.rerun()
+
                 except Exception as error:
-                    st.error(f"Could not create administrator: {error}")
+                    st.error(
+                        f"Could not create administrator: {error}"
+                    )
 
     st.stop()
 
@@ -394,8 +387,6 @@ if "logged_in_user" not in st.session_state:
     st.session_state.logged_in_user = None
 
 if st.session_state.logged_in_user is None:
-    st.markdown("<br>", unsafe_allow_html=True)
-
     left, center, right = st.columns([1, 1.2, 1])
 
     with center:
@@ -413,18 +404,18 @@ if st.session_state.logged_in_user is None:
         )
 
         with st.form("login_form"):
-            st.subheader("Sign in")
+            st.subheader("Sign In")
 
             staff_number = st.text_input("Staff Number")
             password = st.text_input("Password", type="password")
 
-            login_submitted = st.form_submit_button(
+            submitted = st.form_submit_button(
                 "Sign In",
                 type="primary",
                 use_container_width=True,
             )
 
-            if login_submitted:
+            if submitted:
                 user = authenticate_user(
                     staff_number.strip(),
                     password,
@@ -435,7 +426,7 @@ if st.session_state.logged_in_user is None:
                     st.rerun()
                 else:
                     st.error(
-                        "Invalid staff number or password. Please try again."
+                        "Invalid staff number or password."
                     )
 
     st.stop()
@@ -446,14 +437,41 @@ if st.session_state.logged_in_user is None:
 # =========================================================
 
 current_user = st.session_state.logged_in_user
-current_user_id = user_id(current_user)
-current_user_name = get_value(current_user, "name", default="Staff Member")
-current_user_department = get_value(current_user, "department", default="—")
-current_user_role = get_value(current_user, "role", default="User")
+current_user_id = get_user_id(current_user)
+current_user_name = get_value(
+    current_user, "name", default="Staff Member"
+)
+current_user_department = get_value(
+    current_user, "department", default="—"
+)
+current_user_role = get_value(
+    current_user, "role", default="User"
+)
 
 
 # =========================================================
-# SIDEBAR NAVIGATION
+# NAVIGATION OPTIONS
+# =========================================================
+
+pages = [
+    "📊 Dashboard",
+    "📷 Scan / Issue / Return",
+    "🔎 Search Files",
+    "🕒 Movement History",
+    "🔔 Sona Notifications",
+    "📜 Oath & Responsibilities",
+]
+
+if is_admin(current_user):
+    pages.extend([
+        "👤 Register User",
+        "📁 Register File",
+        "📤 Export to Excel",
+    ])
+
+
+# =========================================================
+# EXPANDED SIDEBAR + QUICK-ACTION NAVIGATION
 # =========================================================
 
 with st.sidebar:
@@ -473,35 +491,29 @@ with st.sidebar:
     )
 
     st.divider()
-
     st.markdown("**MAIN MENU**")
 
-    pages = [
-        "📊 Dashboard",
-        "📷 Scan / Issue / Return",
-        "🔎 Search Files",
-        "🕒 Movement History",
-        "🔔 Sona Notifications",
-        "📜 Oath & Responsibilities",
-    ]
+    # Dashboard quick-action buttons set this session value.
+    # The value is applied to the radio navigation below.
+    quick_page = st.session_state.pop("quick_page", None)
 
-    if is_admin(current_user):
-        pages.extend(
-            [
-                "👤 Register User",
-                "📁 Register File",
-                "📤 Export to Excel",
-            ]
-        )
+    if quick_page in pages:
+        st.session_state["page_navigation"] = quick_page
+
+    if (
+        "page_navigation" not in st.session_state
+        or st.session_state["page_navigation"] not in pages
+    ):
+        st.session_state["page_navigation"] = pages[0]
 
     selected_page = st.radio(
         "Navigation",
         pages,
+        key="page_navigation",
         label_visibility="collapsed",
     )
 
     st.divider()
-
     st.markdown("**SIGNED-IN USER**")
     st.write(f"👤 {current_user_name}")
     st.caption(f"Department: {current_user_department}")
@@ -509,6 +521,9 @@ with st.sidebar:
 
     if st.button("🚪 Sign Out", use_container_width=True):
         st.session_state.logged_in_user = None
+        st.session_state.pop("scanned_item", None)
+        st.session_state.pop("detail_item", None)
+        st.session_state.pop("page_navigation", None)
         st.rerun()
 
 
@@ -517,23 +532,30 @@ with st.sidebar:
 # =========================================================
 
 if selected_page == "📊 Dashboard":
-    show_page_header(
+    show_header(
         "📊 Dashboard",
         "Overview of file records, availability and daily operations.",
     )
 
     items = get_all_items()
     total_files = len(items)
-    files_out = [item for item in items if is_file_out(item)]
+
+    files_out = [
+        item for item in items if is_file_out(item)
+    ]
+
     out_count = len(files_out)
     available_count = total_files - out_count
 
     notifications = get_notifications(current_user_id) or []
+
     unread_count = sum(
-        1 for note in notifications
+        1
+        for note in notifications
         if not bool(get_value(note, "is_read", default=0))
     )
 
+    # Dashboard statistics
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -548,7 +570,7 @@ if selected_page == "📊 Dashboard":
         metric_card(
             "Available",
             available_count,
-            "Ready for authorized use",
+            "Not currently issued",
             "✅",
         )
 
@@ -556,7 +578,7 @@ if selected_page == "📊 Dashboard":
         metric_card(
             "Files Out",
             out_count,
-            "Currently issued",
+            "Currently issued files",
             "📤",
         )
 
@@ -568,17 +590,23 @@ if selected_page == "📊 Dashboard":
             "🔔",
         )
 
-    st.markdown('<div class="section-heading">⚡ Quick Actions</div>',
-                unsafe_allow_html=True)
+    # Quick actions
+    st.markdown(
+        '<div class="section-heading">⚡ Quick Actions</div>',
+        unsafe_allow_html=True,
+    )
 
     quick1, quick2, quick3 = st.columns(3)
 
     with quick1:
         if st.button(
             "📷 Scan / Issue / Return",
+            type="primary",
             use_container_width=True,
         ):
-            st.session_state.quick_page = "📷 Scan / Issue / Return"
+            st.session_state["quick_page"] = (
+                "📷 Scan / Issue / Return"
+            )
             st.rerun()
 
     with quick2:
@@ -586,7 +614,7 @@ if selected_page == "📊 Dashboard":
             "🔎 Search Files",
             use_container_width=True,
         ):
-            st.session_state.quick_page = "🔎 Search Files"
+            st.session_state["quick_page"] = "🔎 Search Files"
             st.rerun()
 
     with quick3:
@@ -595,16 +623,19 @@ if selected_page == "📊 Dashboard":
                 "📁 Register New File",
                 use_container_width=True,
             ):
-                st.session_state.quick_page = "📁 Register File"
+                st.session_state["quick_page"] = "📁 Register File"
                 st.rerun()
         else:
             if st.button(
                 "🔔 View Notifications",
                 use_container_width=True,
             ):
-                st.session_state.quick_page = "🔔 Sona Notifications"
+                st.session_state["quick_page"] = (
+                    "🔔 Sona Notifications"
+                )
                 st.rerun()
 
+    # Files currently out
     st.markdown(
         '<div class="section-heading">📤 Files Currently Out</div>',
         unsafe_allow_html=True,
@@ -614,24 +645,19 @@ if selected_page == "📊 Dashboard":
         out_rows = []
 
         for item in files_out:
-            out_rows.append(
-                {
-                    "File ID": get_file_id(item),
-                    "File Name": get_file_name(item),
-                    "Department": get_value(item, "department"),
-                    "Section": get_value(item, "section"),
-                    "Current Holder": get_value(
-                        item,
-                        "current_holder_name",
-                        "current_holder",
-                        default="—",
-                    ) or "—",
-                    "Staff Number": get_value(
-                        item, "current_holder_staff_number", default="—"
-                    ) or "—",
-                    "Status": get_file_status(item),
-                }
-            )
+            out_rows.append({
+                "File ID": get_file_id(item),
+                "File Name": get_file_name(item),
+                "Department": get_value(item, "department"),
+                "Section": get_value(item, "section") or "—",
+                "Current Holder": get_value(
+                    item,
+                    "current_holder_name",
+                    "current_holder",
+                    default="—",
+                ) or "—",
+                "Status": get_file_status(item),
+            })
 
         st.dataframe(
             pd.DataFrame(out_rows),
@@ -641,6 +667,7 @@ if selected_page == "📊 Dashboard":
     else:
         st.success("No files are currently marked as issued.")
 
+    # Recent activity
     st.markdown(
         '<div class="section-heading">🕒 Recent File Activity</div>',
         unsafe_allow_html=True,
@@ -652,20 +679,20 @@ if selected_page == "📊 Dashboard":
         recent_rows = []
 
         for movement in movements[:8]:
-            recent_rows.append(
-                {
-                    "File": get_value(
-                        movement, "file_name", "title", default="—"
-                    ),
-                    "Staff Member": get_value(
-                        movement, "user_name", "name", default="—"
-                    ),
-                    "Action": get_value(movement, "action", default="—"),
-                    "Date & Time": get_value(
-                        movement, "movement_time", default="—"
-                    ),
-                }
-            )
+            recent_rows.append({
+                "File": get_value(
+                    movement, "file_name", "title", default="—"
+                ),
+                "Staff Member": get_value(
+                    movement, "user_name", "name", default="—"
+                ),
+                "Action": get_value(
+                    movement, "action", default="—"
+                ),
+                "Date & Time": get_value(
+                    movement, "movement_time", default="—"
+                ),
+            })
 
         st.dataframe(
             pd.DataFrame(recent_rows),
@@ -681,15 +708,15 @@ if selected_page == "📊 Dashboard":
 # =========================================================
 
 elif selected_page == "📷 Scan / Issue / Return":
-    show_page_header(
+    show_header(
         "📷 Scan / Issue / Return",
-        "Enter or scan a file ID/barcode to retrieve the file record.",
+        "Scan or enter a file ID/barcode to retrieve its record.",
     )
 
-    if not can_move_files(current_user):
+    if is_view_only(current_user):
         st.info(
-            "Your View Only role allows you to view records but not issue "
-            "or return files."
+            "Your View Only role allows you to view records, "
+            "but not issue or return files."
         )
 
     identifier = st.text_input(
@@ -700,26 +727,36 @@ elif selected_page == "📷 Scan / Issue / Return":
 
     if st.button("🔍 Find File", type="primary"):
         if identifier.strip():
-            st.session_state.scanned_item = find_item_from_input(identifier)
+            st.session_state.scanned_item = find_item(
+                identifier.strip()
+            )
         else:
             st.warning("Enter or scan a file ID/barcode first.")
 
     item = st.session_state.get("scanned_item")
 
     if item:
-        st.markdown('<div class="section-heading">File Details</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-heading">File Details</div>',
+            unsafe_allow_html=True,
+        )
 
-        d1, d2 = st.columns(2)
+        left, right = st.columns(2)
 
-        with d1:
+        with left:
             st.write("**File ID:**", get_file_id(item))
             st.write("**File Name:**", get_file_name(item))
             st.write("**Department:**", get_value(item, "department"))
-            st.write("**Section:**", get_value(item, "section") or "—")
+            st.write(
+                "**Section:**",
+                get_value(item, "section") or "—",
+            )
 
-        with d2:
-            st.write("**Barcode:**", get_value(item, "barcode") or "—")
+        with right:
+            st.write(
+                "**Barcode:**",
+                get_value(item, "barcode") or "—",
+            )
             st.write("**Status:**", get_file_status(item))
             st.write(
                 "**Current Holder:**",
@@ -736,38 +773,42 @@ elif selected_page == "📷 Scan / Issue / Return":
         if can_move_files(current_user):
             remarks = st.text_area(
                 "Remarks (optional)",
-                placeholder="Enter any relevant issue or return notes.",
+                placeholder="Enter issue or return notes.",
                 key="movement_remarks",
             )
 
-            is_out = is_file_out(item)
-            holder_id = get_value(item, "current_holder_id", default=None)
-
-            if is_out and str(holder_id) == str(current_user_id):
-                if st.button(
-                    "↩️ Return This File",
-                    type="primary",
-                    use_container_width=True,
-                ):
-                    try:
-                        return_item(
-                            get_value(item, "id", "item_id"),
-                            current_user_id,
-                            remarks.strip(),
-                        )
-                        st.success("File returned successfully.")
-                        st.session_state.scanned_item = None
-                        st.rerun()
-                    except Exception as error:
-                        st.error(f"Could not return file: {error}")
-
-            elif is_out:
-                st.warning(
-                    "This file is already issued to another staff member. "
-                    "Only the current holder should return it through this "
-                    "screen, unless your organization has an approved "
-                    "administrator return procedure."
+            if is_file_out(item):
+                holder_id = get_value(
+                    item, "current_holder_id", default=None
                 )
+
+                if str(holder_id) == str(current_user_id):
+                    if st.button(
+                        "↩️ Return This File",
+                        type="primary",
+                        use_container_width=True,
+                    ):
+                        try:
+                            return_item(
+                                get_value(item, "id", "item_id"),
+                                current_user_id,
+                                remarks.strip(),
+                            )
+
+                            st.success("File returned successfully.")
+                            st.session_state.scanned_item = None
+                            st.rerun()
+
+                        except Exception as error:
+                            st.error(
+                                f"Could not return file: {error}"
+                            )
+                else:
+                    st.warning(
+                        "This file is already issued to another staff "
+                        "member. Follow your organization's approved "
+                        "procedure for handling its return."
+                    )
 
             else:
                 if st.button(
@@ -781,13 +822,15 @@ elif selected_page == "📷 Scan / Issue / Return":
                             current_user_id,
                             remarks.strip(),
                         )
+
                         st.success("File issued successfully.")
                         st.session_state.scanned_item = None
                         st.rerun()
+
                     except Exception as error:
-                        st.error(f"Could not issue file: {error}")
-    elif identifier.strip() and st.session_state.get("scanned_item") is None:
-        st.caption("Use Find File to look up the entered identifier.")
+                        st.error(
+                            f"Could not issue file: {error}"
+                        )
 
 
 # =========================================================
@@ -795,9 +838,9 @@ elif selected_page == "📷 Scan / Issue / Return":
 # =========================================================
 
 elif selected_page == "🔎 Search Files":
-    show_page_header(
+    show_header(
         "🔎 Search Files",
-        "Search the file register by name, ID, department, section or status.",
+        "Search by file name, ID, department, section or status.",
     )
 
     items = get_all_items()
@@ -806,8 +849,8 @@ elif selected_page == "🔎 Search Files":
         st.info("No files have been registered yet.")
     else:
         search_term = st.text_input(
-            "Search",
-            placeholder="Type a file name, file ID, department or barcode...",
+            "Search files",
+            placeholder="File name, ID, department or barcode...",
         )
 
         status_filter = st.selectbox(
@@ -815,34 +858,30 @@ elif selected_page == "🔎 Search Files":
             ["All", "Available", "Out"],
         )
 
-        department_options = sorted(
-            {
-                str(get_value(item, "department", default=""))
-                for item in items
-                if get_value(item, "department", default="")
-            }
-        )
+        departments = sorted({
+            str(get_value(item, "department"))
+            for item in items
+            if get_value(item, "department")
+        })
 
         department_filter = st.selectbox(
             "Filter by Department",
-            ["All Departments"] + department_options,
+            ["All Departments"] + departments,
         )
 
         filtered_items = []
 
         for item in items:
-            searchable_text = " ".join(
-                [
-                    str(get_file_id(item)),
-                    str(get_file_name(item)),
-                    str(get_value(item, "department")),
-                    str(get_value(item, "section")),
-                    str(get_value(item, "barcode")),
-                    str(get_value(item, "current_holder_name")),
-                ]
-            ).lower()
+            search_text = " ".join([
+                str(get_file_id(item)),
+                str(get_file_name(item)),
+                str(get_value(item, "department")),
+                str(get_value(item, "section")),
+                str(get_value(item, "barcode")),
+                str(get_value(item, "current_holder_name")),
+            ]).lower()
 
-            if search_term.strip().lower() not in searchable_text:
+            if search_term.strip().lower() not in search_text:
                 continue
 
             if status_filter == "Available" and is_file_out(item):
@@ -864,17 +903,17 @@ elif selected_page == "🔎 Search Files":
 
         if filtered_items:
             st.dataframe(
-                format_file_table(filtered_items),
+                make_file_dataframe(filtered_items),
                 use_container_width=True,
                 hide_index=True,
             )
         else:
-            st.warning("No files match your search and filters.")
+            st.warning("No files match your filters.")
 
         st.markdown("### View an individual file")
 
         chosen_id = st.text_input(
-            "Enter the File ID or barcode for details",
+            "File ID or barcode",
             placeholder="Example: DFS-000001",
         )
 
@@ -895,8 +934,14 @@ elif selected_page == "🔎 Search Files":
         if detail_item:
             st.write("**File ID:**", get_file_id(detail_item))
             st.write("**File Name:**", get_file_name(detail_item))
-            st.write("**Department:**", get_value(detail_item, "department"))
-            st.write("**Section:**", get_value(detail_item, "section") or "—")
+            st.write(
+                "**Department:**",
+                get_value(detail_item, "department"),
+            )
+            st.write(
+                "**Section:**",
+                get_value(detail_item, "section") or "—",
+            )
             st.write("**Status:**", get_file_status(detail_item))
 
 
@@ -905,7 +950,7 @@ elif selected_page == "🔎 Search Files":
 # =========================================================
 
 elif selected_page == "🕒 Movement History":
-    show_page_header(
+    show_header(
         "🕒 Movement History",
         "Review recorded file issues and returns.",
     )
@@ -918,23 +963,28 @@ elif selected_page == "🕒 Movement History":
         rows = []
 
         for movement in movements:
-            rows.append(
-                {
-                    "File ID": get_value(
-                        movement, "system_file_id", "file_id", "item_id"
-                    ),
-                    "File Name": get_value(
-                        movement, "file_name", "title"
-                    ),
-                    "Staff Member": get_value(
-                        movement, "user_name", "name"
-                    ),
-                    "Staff Number": get_value(movement, "staff_number"),
-                    "Action": get_value(movement, "action"),
-                    "Date & Time": get_value(movement, "movement_time"),
-                    "Remarks": get_value(movement, "remarks"),
-                }
-            )
+            rows.append({
+                "File ID": get_value(
+                    movement,
+                    "system_file_id",
+                    "file_id",
+                    "item_id",
+                ),
+                "File Name": get_value(
+                    movement, "file_name", "title"
+                ),
+                "Staff Member": get_value(
+                    movement, "user_name", "name"
+                ),
+                "Staff Number": get_value(
+                    movement, "staff_number"
+                ),
+                "Action": get_value(movement, "action"),
+                "Date & Time": get_value(
+                    movement, "movement_time"
+                ),
+                "Remarks": get_value(movement, "remarks"),
+            })
 
         movement_df = pd.DataFrame(rows)
 
@@ -966,7 +1016,7 @@ elif selected_page == "🕒 Movement History":
 # =========================================================
 
 elif selected_page == "🔔 Sona Notifications":
-    show_page_header(
+    show_header(
         "🔔 Sona Notifications",
         "View system notifications and accountability alerts.",
     )
@@ -979,16 +1029,25 @@ elif selected_page == "🔔 Sona Notifications":
             st.success("Notifications marked as read.")
             st.rerun()
         except Exception as error:
-            st.error(f"Could not update notifications: {error}")
+            st.error(
+                f"Could not update notifications: {error}"
+            )
 
     if not notifications:
         st.info("There are no notifications to display.")
     else:
         for note in notifications:
-            is_read = bool(get_value(note, "is_read", default=0))
-            heading = get_value(note, "title", default="Notification")
+            is_read = bool(
+                get_value(note, "is_read", default=0)
+            )
+
+            heading = get_value(
+                note, "title", default="Notification"
+            )
             message = get_value(note, "message", default="")
-            created_at = get_value(note, "created_at", default="")
+            created_at = get_value(
+                note, "created_at", default=""
+            )
 
             with st.container(border=True):
                 col1, col2 = st.columns([5, 1])
@@ -1001,7 +1060,9 @@ elif selected_page == "🔔 Sona Notifications":
                         st.caption(str(created_at))
 
                 with col2:
-                    st.caption("Read" if is_read else "Unread")
+                    st.caption(
+                        "Read" if is_read else "Unread"
+                    )
 
 
 # =========================================================
@@ -1009,15 +1070,16 @@ elif selected_page == "🔔 Sona Notifications":
 # =========================================================
 
 elif selected_page == "📜 Oath & Responsibilities":
-    show_page_header(
+    show_header(
         "📜 Oath & Responsibilities",
-        "Read and acknowledge your responsibilities when handling physical files.",
+        "Responsibilities for handling physical files.",
     )
 
     st.markdown(
         """
         <div class="panel">
             <h3 style="color:#102A43;">Digital Filing System Oath</h3>
+
             I understand that physical files are official organizational
             records and must be handled responsibly.
 
@@ -1030,52 +1092,57 @@ elif selected_page == "📜 Oath & Responsibilities":
                 <li>I understand that file movements may be recorded for accountability.</li>
             </ul>
 
-            <p>
-            <strong>Credit / Filing Administrator responsibilities:</strong>
-            verify file identification, record movements accurately, protect
-            records, and follow the organization's authorization procedures.
-            </p>
+            <p><strong>Administrator responsibilities:</strong>
+            verify file identification, record movements accurately, and
+            follow organizational authorization procedures.</p>
 
-            <p>
-            <strong>File user responsibilities:</strong>
-            use files only for authorized work, safeguard them while in their
-            possession, and return them promptly.
-            </p>
+            <p><strong>File user responsibilities:</strong>
+            use files only for authorized work, safeguard them while in
+            their possession, and return them promptly.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     st.warning(
-        "This is a system acknowledgement template. Have your organization "
-        "approve the final wording before using it as an official policy."
+        "Have your organization approve this wording before using it "
+        "as an official policy."
     )
 
-    already_acknowledged = bool(
+    acknowledged = bool(
         get_value(current_user, "oath_acknowledged", default=0)
     )
 
-    if already_acknowledged:
-        st.success("Your account shows that you have acknowledged the oath.")
-        oath_date = get_value(current_user, "oath_date", default="")
+    if acknowledged:
+        st.success(
+            "Your account shows that you have acknowledged the oath."
+        )
+
+        oath_date = get_value(
+            current_user, "oath_date", default=""
+        )
+
         if oath_date:
             st.caption(f"Acknowledgement date: {oath_date}")
+
     else:
-        confirm_oath = st.checkbox(
+        confirmed = st.checkbox(
             "I have read and understood the responsibilities above."
         )
 
         if st.button(
             "Acknowledge Responsibilities",
             type="primary",
-            disabled=not confirm_oath,
+            disabled=not confirmed,
         ):
             try:
                 acknowledge_oath(current_user_id)
-                st.success("Your acknowledgement has been recorded.")
+                st.success("Acknowledgement recorded.")
                 st.rerun()
             except Exception as error:
-                st.error(f"Could not record acknowledgement: {error}")
+                st.error(
+                    f"Could not record acknowledgement: {error}"
+                )
 
 
 # =========================================================
@@ -1087,7 +1154,7 @@ elif selected_page == "👤 Register User":
         st.error("Only administrators can register users.")
         st.stop()
 
-    show_page_header(
+    show_header(
         "👤 Register User",
         "Create an account for an authorized staff member.",
     )
@@ -1098,11 +1165,16 @@ elif selected_page == "👤 Register User":
         department = st.text_input("Department")
         section = st.text_input("Section (optional)")
         staff_number = st.text_input("Staff Number")
+
         role = st.selectbox(
             "Role",
             ["User", "View Only", "Admin"],
         )
-        password = st.text_input("Temporary Password", type="password")
+
+        password = st.text_input(
+            "Temporary Password",
+            type="password",
+        )
         confirm_password = st.text_input(
             "Confirm Password",
             type="password",
@@ -1115,18 +1187,18 @@ elif selected_page == "👤 Register User":
         )
 
         if submitted:
-            if not all(
-                [
-                    name.strip(),
-                    email.strip(),
-                    department.strip(),
-                    staff_number.strip(),
-                    password,
-                ]
-            ):
+            if not all([
+                name.strip(),
+                email.strip(),
+                department.strip(),
+                staff_number.strip(),
+                password,
+            ]):
                 st.error("Complete all required fields.")
+
             elif password != confirm_password:
                 st.error("The passwords do not match.")
+
             else:
                 try:
                     add_user(
@@ -1138,10 +1210,16 @@ elif selected_page == "👤 Register User":
                         role,
                         password,
                     )
-                    st.success(f"User {name.strip()} registered successfully.")
+
+                    st.success(
+                        f"User {name.strip()} registered successfully."
+                    )
                     st.rerun()
+
                 except Exception as error:
-                    st.error(f"Could not register user: {error}")
+                    st.error(
+                        f"Could not register user: {error}"
+                    )
 
 
 # =========================================================
@@ -1153,7 +1231,7 @@ elif selected_page == "📁 Register File":
         st.error("Only administrators can register files.")
         st.stop()
 
-    show_page_header(
+    show_header(
         "📁 Register File",
         "Add a physical file to the register and generate its barcode.",
     )
@@ -1183,27 +1261,31 @@ elif selected_page == "📁 Register File":
                         section.strip() or None,
                     )
 
-                    # Find the newly registered file from the existing DB.
                     current_items = get_all_items()
+
                     matches = [
                         item for item in current_items
                         if str(get_file_name(item)).strip().lower()
                         == file_name.strip().lower()
                         and str(get_value(item, "department")).strip().lower()
                         == department.strip().lower()
-                        and str(get_value(item, "section") or "").strip().lower()
+                        and str(
+                            get_value(item, "section") or ""
+                        ).strip().lower()
                         == (section.strip() or "").lower()
                     ]
 
                     if matches:
                         new_item = matches[-1]
+
                         barcode_value = (
                             get_value(new_item, "barcode")
                             or get_file_id(new_item)
                         )
 
                         st.success(
-                            f"File registered. File ID: {get_file_id(new_item)}"
+                            f"File registered. File ID: "
+                            f"{get_file_id(new_item)}"
                         )
 
                         if barcode_value:
@@ -1212,41 +1294,50 @@ elif selected_page == "📁 Register File":
                                     str(barcode_value)
                                 )
 
-                                if barcode_path and Path(barcode_path).exists():
+                                if (
+                                    barcode_path
+                                    and Path(barcode_path).exists()
+                                ):
                                     st.image(
                                         barcode_path,
                                         caption=f"Barcode: {barcode_value}",
                                         width=360,
                                     )
 
-                                    with open(barcode_path, "rb") as barcode_file:
+                                    with open(
+                                        barcode_path, "rb"
+                                    ) as barcode_file:
                                         st.download_button(
                                             "⬇️ Download Barcode PNG",
                                             data=barcode_file.read(),
                                             file_name=(
-                                                f"{get_file_id(new_item) or 'file'}"
+                                                f"{get_file_id(new_item)}"
                                                 "_barcode.png"
                                             ),
                                             mime="image/png",
                                         )
                                 else:
                                     st.warning(
-                                        "The file was registered, but the "
-                                        "barcode image could not be located."
+                                        "File registered, but the barcode "
+                                        "image could not be located."
                                     )
+
                             except Exception as barcode_error:
                                 st.warning(
-                                    "The file was registered, but barcode "
+                                    "File registered, but barcode "
                                     f"generation failed: {barcode_error}"
                                 )
+
                     else:
                         st.success("File registered successfully.")
                         st.info(
-                            "Refresh the file register to view the new record."
+                            "Refresh the register to view the new record."
                         )
 
                 except Exception as error:
-                    st.error(f"Could not register file: {error}")
+                    st.error(
+                        f"Could not register file: {error}"
+                    )
 
     st.markdown("### Recently Registered Files")
 
@@ -1254,7 +1345,7 @@ elif selected_page == "📁 Register File":
 
     if current_items:
         st.dataframe(
-            format_file_table(current_items[:10]),
+            make_file_dataframe(current_items[:10]),
             use_container_width=True,
             hide_index=True,
         )
@@ -1271,9 +1362,9 @@ elif selected_page == "📤 Export to Excel":
         st.error("Only administrators can export system records.")
         st.stop()
 
-    show_page_header(
+    show_header(
         "📤 Export to Excel",
-        "Export file register and accountability records for authorized use.",
+        "Export file register and accountability records.",
     )
 
     st.markdown(
@@ -1309,6 +1400,9 @@ elif selected_page == "📤 Export to Excel":
                 use_container_width=True,
             )
 
-            st.success("Your Excel report is ready to download.")
+            st.success("Your Excel report is ready.")
+
         except Exception as error:
-            st.error(f"Could not create Excel export: {error}")
+            st.error(
+                f"Could not create Excel export: {error}"
+            )
